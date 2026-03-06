@@ -73,11 +73,10 @@ void main() {
     // Exposure
     color *= material.exposure;
 
-    // Tone mapping (Reinhard)
-    color = color / (color + vec3(1.0));
-
-    // Gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
+    // Output linear HDR — tonemapping and gamma correction are handled
+    // by the post-process stack (consistent with lit.frag).
+    // Applying them here would mix sRGB skybox samples with linear HDR
+    // object samples during MSAA resolve, visibly degrading anti-aliasing.
 
     outColor = vec4(color, 1.0);
 }

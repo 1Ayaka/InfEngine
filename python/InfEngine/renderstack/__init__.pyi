@@ -8,6 +8,9 @@ from InfEngine.renderstack.injection_point import InjectionPoint as InjectionPoi
 from InfEngine.renderstack.resource_bus import ResourceBus as ResourceBus
 from InfEngine.renderstack.render_pass import RenderPass as RenderPass
 from InfEngine.renderstack.geometry_pass import GeometryPass as GeometryPass
+from InfEngine.renderstack.fullscreen_effect import FullScreenEffect as FullScreenEffect
+from InfEngine.renderstack.bloom_effect import BloomEffect as BloomEffect
+from InfEngine.renderstack.tonemapping_effect import ToneMappingEffect as ToneMappingEffect
 from InfEngine.renderstack.render_stack import RenderStack as RenderStack
 from InfEngine.renderstack.render_stack import PassEntry as PassEntry
 from InfEngine.renderstack.render_stack_pipeline import RenderStackPipeline as RenderStackPipeline

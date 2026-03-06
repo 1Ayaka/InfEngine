@@ -95,10 +95,19 @@ class BloomEffect(FullScreenEffect):
 
         iterations = max(1, min(self.max_iterations, 8))
 
+        # Helper: get existing texture or create new one.
+        # setup_passes may be called on a graph that already contains
+        # bloom textures from a previous injection in the same build.
+        def _tex(name, **kwargs):
+            existing = graph.get_texture(name)
+            if existing is not None:
+                return existing
+            return graph.create_texture(name, **kwargs)
+
         # ---- Create intermediate textures ----
 
         # Scene copy (full-res) — avoids read+write hazard on backbuffer
-        scene_copy = graph.create_texture(
+        scene_copy = _tex(
             "_bloom_scene_copy",
             format=Format.RGBA16_SFLOAT,
         )
@@ -107,7 +116,7 @@ class BloomEffect(FullScreenEffect):
         mip_textures = []
         for i in range(iterations):
             divisor = 2 ** (i + 1)  # 2, 4, 8, 16, ...
-            tex = graph.create_texture(
+            tex = _tex(
                 f"_bloom_mip{i}",
                 format=Format.RGBA16_SFLOAT,
                 size_divisor=divisor,
@@ -119,7 +128,7 @@ class BloomEffect(FullScreenEffect):
         up_textures = []
         for i in range(iterations):
             divisor = 2 ** (i + 1)
-            tex = graph.create_texture(
+            tex = _tex(
                 f"_bloom_up{i}",
                 format=Format.RGBA16_SFLOAT,
                 size_divisor=divisor,

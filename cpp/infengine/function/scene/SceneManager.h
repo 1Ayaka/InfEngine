@@ -2,6 +2,7 @@
 
 #include "EditorCameraController.h"
 #include "Scene.h"
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <string>
@@ -135,6 +136,25 @@ class SceneManager
     [[nodiscard]] float GetFixedTimeStep() const
     {
         return m_fixedTimeStep;
+    }
+
+    /// @brief Set the fixed physics timestep in seconds.
+    void SetFixedTimeStep(float value)
+    {
+        m_fixedTimeStep = std::max(0.001f, value);
+        m_maxFixedDeltaTime = std::max(m_maxFixedDeltaTime, m_fixedTimeStep);
+    }
+
+    /// @brief Get the max clamped frame delta used by the fixed-step accumulator.
+    [[nodiscard]] float GetMaxFixedDeltaTime() const
+    {
+        return m_maxFixedDeltaTime;
+    }
+
+    /// @brief Set the max clamped frame delta used by the fixed-step accumulator.
+    void SetMaxFixedDeltaTime(float value)
+    {
+        m_maxFixedDeltaTime = std::max(m_fixedTimeStep, value);
     }
 
     // ========================================================================

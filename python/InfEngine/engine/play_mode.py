@@ -153,6 +153,12 @@ class PlayModeManager:
     def time_scale(self, value: float):
         """Set time scale (clamped to >= 0)."""
         self._time_scale = max(0.0, value)
+        # Keep static Time class in sync
+        try:
+            from InfEngine.timing import Time
+            Time._time_scale = self._time_scale
+        except Exception:
+            pass
     
     @property
     def total_play_time(self) -> float:
@@ -190,6 +196,13 @@ class PlayModeManager:
         self._last_frame_time = time.time()
         self._total_play_time = 0.0
         self._delta_time = 0.0
+
+        # Reset the static Time class for fresh play session
+        try:
+            from InfEngine.timing import Time
+            Time._reset()
+        except Exception:
+            pass
         
         # Step 3: Clear BuiltinComponent wrapper cache (fresh start)
         from InfEngine.components.builtin_component import BuiltinComponent
@@ -370,15 +383,23 @@ class PlayModeManager:
         # Calculate delta time
         current_time = time.time()
         if external_delta_time is not None:
-            self._delta_time = external_delta_time * self._time_scale
+            raw_dt = external_delta_time
         else:
-            self._delta_time = (current_time - self._last_frame_time) * self._time_scale
+            raw_dt = current_time - self._last_frame_time
         
         self._last_frame_time = current_time
-        self._total_play_time += self._delta_time
-        
-        # Clamp delta time to avoid spiral of death
-        self._delta_time = min(self._delta_time, 0.1)  # Max 100ms
+
+        # Sync time_scale from the static Time class (user may set Time.time_scale)
+        try:
+            from InfEngine.timing import Time
+            self._time_scale = Time._time_scale
+            Time._tick(raw_dt)
+            # Read back computed values so PlayModeManager stays in sync
+            self._delta_time = Time.delta_time
+            self._total_play_time = Time.time
+        except Exception:
+            self._delta_time = min(raw_dt * self._time_scale, 0.1)
+            self._total_play_time += self._delta_time
         
         # NOTE: Lifecycle update is driven by C++ only.
 

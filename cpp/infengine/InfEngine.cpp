@@ -22,6 +22,7 @@
 #include <function/scene/SceneRenderer.h>
 #include <function/scene/physics/PhysicsWorld.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #ifdef _WIN32
 #include <ShlObj.h> // SHGetFolderPathW for Documents path
@@ -762,6 +763,16 @@ void InfEngine::SetLogLevel(LogLevel engineLevel)
 // ----------------------------------
 // ImGui layout save / load (Unicode-safe)
 // ----------------------------------
+
+void InfEngine::ResetImGuiLayout()
+{
+    // Clear ImGui's in-memory ini state (windows, docking, tables)
+    ImGui::ClearIniSettings();
+    // Delete the persisted ini file so the reset survives a restart
+    if (!m_imguiIniPath.empty() && std::filesystem::exists(m_imguiIniPath)) {
+        std::filesystem::remove(m_imguiIniPath);
+    }
+}
 
 void InfEngine::LoadImGuiLayout()
 {

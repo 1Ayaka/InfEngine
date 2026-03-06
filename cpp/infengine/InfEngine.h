@@ -53,6 +53,7 @@ class InfEngine
     void SetGUIFont(const std::string &fontPath, float fontSize);
     void RegisterGUIRenderable(const std::string &name, std::shared_ptr<InfGUIRenderable> renderable);
     void UnregisterGUIRenderable(const std::string &name);
+    void ResetImGuiLayout();
     void ShowWindow();
     void HideWindow();
     void SetWindowIcon(const std::string &iconPath);

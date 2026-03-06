@@ -247,6 +247,9 @@ class InfGUIContext
     void DrawText(float x, float y, const std::string &text, float r, float g, float b, float a, float fontSize = 0.0f);
     void DrawTextAligned(float minX, float minY, float maxX, float maxY, const std::string &text, float r, float g,
                          float b, float a, float alignX, float alignY, float fontSize = 0.0f, bool clip = false);
+    void DrawTextRotated90Aligned(float minX, float minY, float maxX, float maxY, const std::string &text, float r,
+                    float g, float b, float a, float alignX, float alignY, float fontSize = 0.0f,
+                    bool clockwise = false, bool clip = false);
     std::pair<float, float> CalcTextSizeA(const std::string &text, float fontSize = 0.0f);
 
     /* draw list clip rect (for custom clipping of draw primitives) */

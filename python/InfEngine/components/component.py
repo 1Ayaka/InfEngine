@@ -24,6 +24,7 @@ import weakref
 
 if TYPE_CHECKING:
     from InfEngine.lib import GameObject, Transform
+    from InfEngine.coroutine import Coroutine
 
 
 class InfComponent:
@@ -196,6 +197,9 @@ class InfComponent:
         # Component lookup cache (invalidated when components change)
         self._component_cache: Dict[Type, Any] = {}
         self._cache_valid = False
+
+        # Coroutine scheduler (lazy-created on first start_coroutine call)
+        self._coroutine_scheduler = None
         
         # Initialize serialized fields with defaults (from class-level declarations)
         self._init_serialized_fields()
@@ -467,18 +471,37 @@ class InfComponent:
         if not self.enabled:
             return
         self._safe_lifecycle_call("update", delta_time)
+        # Tick coroutines after user update (matching Unity order)
+        if self._coroutine_scheduler is not None:
+            try:
+                from InfEngine.timing import Time
+                scaled_dt = Time.delta_time
+            except Exception:
+                scaled_dt = delta_time
+            self._coroutine_scheduler.tick_update(scaled_dt)
 
     def _call_fixed_update(self, fixed_delta_time: float):
         """Internal: Trigger fixed_update lifecycle."""
         if not self.enabled:
             return
         self._safe_lifecycle_call("fixed_update", fixed_delta_time)
+        # Tick coroutines waiting for fixed_update
+        if self._coroutine_scheduler is not None:
+            self._coroutine_scheduler.tick_fixed_update(fixed_delta_time)
 
     def _call_late_update(self, delta_time: float):
         """Internal: Trigger late_update lifecycle."""
         if not self.enabled:
             return
         self._safe_lifecycle_call("late_update", delta_time)
+        # Tick coroutines waiting for end-of-frame
+        if self._coroutine_scheduler is not None:
+            try:
+                from InfEngine.timing import Time
+                scaled_dt = Time.delta_time
+            except Exception:
+                scaled_dt = delta_time
+            self._coroutine_scheduler.tick_late_update(scaled_dt)
     
     @classmethod
     def _clear_all_instances(cls) -> None:
@@ -491,6 +514,10 @@ class InfComponent:
             return  # Already destroyed, don't call again
         self._is_destroyed = True
         self._enabled = False
+        # Stop all coroutines before on_destroy callback
+        if self._coroutine_scheduler is not None:
+            self._coroutine_scheduler.stop_all()
+            self._coroutine_scheduler = None
         # Remove from active-instances registry (safety net; _set_game_object(None)
         # should have done this already, but guard against missed calls)
         self._remove_from_active_registry()
@@ -777,6 +804,55 @@ class InfComponent:
                 Gizmos.draw_wire_cube(self.transform.position, (1, 1, 1))
         """
         pass
+
+    # ========================================================================
+    # Coroutine support (Unity-style)
+    # ========================================================================
+
+    def start_coroutine(self, generator) -> 'Coroutine':
+        """Start a coroutine on this component.
+
+        Args:
+            generator: A generator object (call your generator function first).
+
+        Returns:
+            A :class:`~InfEngine.coroutine.Coroutine` handle that can be passed
+            to :meth:`stop_coroutine` or ``yield``-ed from another coroutine to
+            wait for completion.
+
+        Example::
+
+            from InfEngine.coroutine import WaitForSeconds
+
+            class Enemy(InfComponent):
+                def start(self):
+                    self.start_coroutine(self.patrol())
+
+                def patrol(self):
+                    while True:
+                        debug.log("Moving left")
+                        yield WaitForSeconds(2)
+                        debug.log("Moving right")
+                        yield WaitForSeconds(2)
+        """
+        from InfEngine.coroutine import CoroutineScheduler
+        if self._coroutine_scheduler is None:
+            self._coroutine_scheduler = CoroutineScheduler()
+        return self._coroutine_scheduler.start(generator, owner=self)
+
+    def stop_coroutine(self, coroutine) -> None:
+        """Stop a specific coroutine previously started with :meth:`start_coroutine`.
+
+        Args:
+            coroutine: The :class:`~InfEngine.coroutine.Coroutine` handle.
+        """
+        if self._coroutine_scheduler is not None:
+            self._coroutine_scheduler.stop(coroutine)
+
+    def stop_all_coroutines(self) -> None:
+        """Stop **all** coroutines running on this component."""
+        if self._coroutine_scheduler is not None:
+            self._coroutine_scheduler.stop_all()
 
     # ========================================================================
     # Serialization (used by Play Mode snapshot)

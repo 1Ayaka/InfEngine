@@ -350,6 +350,7 @@ def release_engine(project_path: str, engine_log_level=LogLevel.Info):
     os.makedirs(_layout_dir, exist_ok=True)
     _layout_ver_path = str(_layout_dir / ".layout_version")
     _imgui_ini_path = str(_layout_dir / "imgui.ini")
+    window_manager.set_imgui_ini_path(_imgui_ini_path)
 
     # Also clean up old project-local imgui.ini if it exists
     _old_ini = os.path.join(project_path, "imgui.ini")

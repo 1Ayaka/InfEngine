@@ -1,5 +1,7 @@
 #include "InfGUIContext.h"
 #include <SDL3/SDL.h>
+#include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <type_traits>
 
@@ -1004,6 +1006,66 @@ void InfGUIContext::DrawTextAligned(float minX, float minY, float maxX, float ma
 
     if (clip)
         drawList->PopClipRect();
+}
+
+void InfGUIContext::DrawTextRotated90Aligned(float minX, float minY, float maxX, float maxY, const std::string &text,
+                                             float r, float g, float b, float a, float alignX, float alignY,
+                                             float fontSize, bool clockwise, bool clip)
+{
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+    if (!drawList || text.empty())
+        return;
+
+    ImFont *font = ImGui::GetFont();
+    float size = (fontSize > 0.0f) ? fontSize : ImGui::GetFontSize();
+    ImVec2 textSize = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text.c_str());
+
+    float rotatedW = textSize.y;
+    float rotatedH = textSize.x;
+    float targetX = minX + (maxX - minX - rotatedW) * alignX;
+    float targetY = minY + (maxY - minY - rotatedH) * alignY;
+
+    const int vtxStart = drawList->VtxBuffer.Size;
+    ImU32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a));
+
+    if (clip)
+        drawList->PushClipRect(ImVec2(minX, minY), ImVec2(maxX, maxY), true);
+
+    drawList->AddText(font, size, ImVec2(minX, minY), col, text.c_str());
+
+    if (clip)
+        drawList->PopClipRect();
+
+    if (drawList->VtxBuffer.Size <= vtxStart)
+        return;
+
+    ImVec2 boundsMin(FLT_MAX, FLT_MAX);
+    ImVec2 boundsMax(-FLT_MAX, -FLT_MAX);
+    for (int i = vtxStart; i < drawList->VtxBuffer.Size; ++i) {
+        const ImVec2 &p = drawList->VtxBuffer[i].pos;
+        boundsMin.x = std::min(boundsMin.x, p.x);
+        boundsMin.y = std::min(boundsMin.y, p.y);
+        boundsMax.x = std::max(boundsMax.x, p.x);
+        boundsMax.y = std::max(boundsMax.y, p.y);
+    }
+
+    ImVec2 rotatedMin(FLT_MAX, FLT_MAX);
+    ImVec2 rotatedMax(-FLT_MAX, -FLT_MAX);
+    for (int i = vtxStart; i < drawList->VtxBuffer.Size; ++i) {
+        ImVec2 local(drawList->VtxBuffer[i].pos.x - boundsMin.x, drawList->VtxBuffer[i].pos.y - boundsMin.y);
+        ImVec2 rotated = clockwise ? ImVec2(local.y, textSize.x - local.x) : ImVec2(textSize.y - local.y, local.x);
+        drawList->VtxBuffer[i].pos = rotated;
+        rotatedMin.x = std::min(rotatedMin.x, rotated.x);
+        rotatedMin.y = std::min(rotatedMin.y, rotated.y);
+        rotatedMax.x = std::max(rotatedMax.x, rotated.x);
+        rotatedMax.y = std::max(rotatedMax.y, rotated.y);
+    }
+
+    ImVec2 delta(targetX - rotatedMin.x, targetY - rotatedMin.y);
+    for (int i = vtxStart; i < drawList->VtxBuffer.Size; ++i) {
+        drawList->VtxBuffer[i].pos.x += delta.x;
+        drawList->VtxBuffer[i].pos.y += delta.y;
+    }
 }
 
 std::pair<float, float> InfGUIContext::CalcTextSizeA(const std::string &text, float fontSize)

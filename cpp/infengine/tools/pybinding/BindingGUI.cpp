@@ -403,6 +403,11 @@ void RegisterGUIBindings(py::module_ &m)
              py::arg("max_y"), py::arg("text"), py::arg("r"), py::arg("g"), py::arg("b"), py::arg("a"),
              py::arg("align_x") = 0.0f, py::arg("align_y") = 0.0f, py::arg("font_size") = 0.0f, py::arg("clip") = false,
              "Draw aligned text within a bounding box (align 0=left/top, 0.5=center, 1=right/bottom)")
+        .def("draw_text_rotated_90_aligned", &InfGUIContext::DrawTextRotated90Aligned, py::arg("min_x"),
+             py::arg("min_y"), py::arg("max_x"), py::arg("max_y"), py::arg("text"), py::arg("r"), py::arg("g"),
+             py::arg("b"), py::arg("a"), py::arg("align_x") = 0.0f, py::arg("align_y") = 0.0f,
+             py::arg("font_size") = 0.0f, py::arg("clockwise") = false, py::arg("clip") = false,
+             "Draw text rotated by 90 degrees inside a bounding box")
         .def(
             "calc_text_size",
             [](InfGUIContext &ctx, const std::string &text,

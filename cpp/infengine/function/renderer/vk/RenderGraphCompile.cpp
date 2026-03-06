@@ -157,6 +157,15 @@ void RenderGraph::TopologicalSort()
     }
 
     // For each reader pass, look up writers via the map — O(1) per resource
+    // For each reader pass, look up writers via the map.
+    // IMPORTANT: Only create edges from writers declared BEFORE the reader
+    // (writePassId < readPassId).  Without this constraint, a resource that
+    // is written by an early pass, read by a middle pass, and written again
+    // by a late pass would create a spurious backward edge late→middle,
+    // forming a cycle.  The render graph does not version resources, so
+    // declaration order is used as a proxy for the intended data-flow
+    // timeline.  This matches the Python-side declaration order which is
+    // always the logical execution order.
     for (uint32_t readPassId : activePasses) {
         const auto &readPass = m_passes[readPassId];
 
@@ -164,7 +173,7 @@ void RenderGraph::TopologicalSort()
             auto it = resourceWriters.find(read.handle.id);
             if (it != resourceWriters.end()) {
                 for (uint32_t writePassId : it->second) {
-                    if (writePassId != readPassId) {
+                    if (writePassId != readPassId && writePassId < readPassId) {
                         adjacency[writePassId].push_back(readPassId);
                         inDegree[readPassId]++;
                     }
@@ -177,7 +186,7 @@ void RenderGraph::TopologicalSort()
             auto it = depthWriters.find(readPass.depthInput.id);
             if (it != depthWriters.end()) {
                 for (uint32_t writePassId : it->second) {
-                    if (writePassId != readPassId) {
+                    if (writePassId != readPassId && writePassId < readPassId) {
                         adjacency[writePassId].push_back(readPassId);
                         inDegree[readPassId]++;
                     }

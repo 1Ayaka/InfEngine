@@ -150,6 +150,7 @@ PYBIND11_MODULE(_InfEngine, m)
         .def("set_log_level", &InfEngine::SetLogLevel)
         .def("register_gui_renderable", &InfEngine::RegisterGUIRenderable, py::arg("name"), py::arg("renderable"))
         .def("unregister_gui_renderable", &InfEngine::UnregisterGUIRenderable, py::arg("name"))
+        .def("reset_imgui_layout", &InfEngine::ResetImGuiLayout, "Clear ImGui docking layout and delete saved ini")
         .def("exit", &InfEngine::Exit, "Exit the InfEngine application")
         .def("cleanup", &InfEngine::Cleanup, "Destroy renderer and release all GPU resources")
         .def("is_close_requested", &InfEngine::IsCloseRequested,

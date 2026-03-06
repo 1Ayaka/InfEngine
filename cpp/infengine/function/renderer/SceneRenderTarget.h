@@ -127,10 +127,13 @@ class SceneRenderTarget
         return m_depthImageView;
     }
 
-    /// @brief Get color format
+    /// @brief Get scene color format.
+    ///
+    /// The scene target is HDR so emissive/light contributions > 1.0 can
+    /// survive until bloom / post-process passes.
     VkFormat GetColorFormat() const
     {
-        return VK_FORMAT_R8G8B8A8_UNORM;
+        return VK_FORMAT_R16G16B16A16_SFLOAT;
     }
 
     /// @brief Get depth format

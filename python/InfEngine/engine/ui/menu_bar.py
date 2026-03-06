@@ -1,6 +1,8 @@
 from InfEngine.lib import InfGUIRenderable, InfGUIContext, InfEngine
 from typing import TYPE_CHECKING
 from .build_settings_panel import BuildSettingsPanel
+from .tag_layer_settings import PhysicsLayerMatrixPanel
+from InfEngine.engine.project_context import get_project_root
 
 if TYPE_CHECKING:
     from .window_manager import WindowManager
@@ -22,6 +24,8 @@ class MenuBarPanel(InfGUIRenderable):
         self._dark_mode = True  # default to dark
         self._scene_file_manager = None
         self._build_settings = BuildSettingsPanel()
+        self._physics_layer_matrix = PhysicsLayerMatrixPanel()
+        self._physics_layer_matrix.set_project_path(get_project_root() or "")
 
     def set_window_manager(self, window_manager: 'WindowManager'):
         """Set the window manager for the Window menu."""
@@ -31,14 +35,12 @@ class MenuBarPanel(InfGUIRenderable):
         """Set the SceneFileManager for File menu operations."""
         self._scene_file_manager = sfm
 
-    def _open_tag_layer_settings(self, focus_collision_matrix: bool = False):
-        """Open the shared Tags & Layers window, optionally focusing the collision matrix."""
-        if not self.__window_manager:
-            return
-
-        panel = self.__window_manager.open_window("tag_layer_settings")
-        if focus_collision_matrix and panel and hasattr(panel, "focus_collision_matrix"):
-            panel.focus_collision_matrix()
+    def _toggle_physics_layer_matrix(self):
+        """Toggle the standalone physics layer matrix floating window."""
+        if self._physics_layer_matrix.is_open:
+            self._physics_layer_matrix.close()
+        else:
+            self._physics_layer_matrix.open()
 
     def on_render(self, ctx: InfGUIContext):
         # Handle global shortcuts (before any menu logic)
@@ -64,9 +66,8 @@ class MenuBarPanel(InfGUIRenderable):
                         self._build_settings.open()
 
                 if self.__window_manager:
-                    is_tag_layer_open = self.__window_manager.is_window_open("tag_layer_settings")
-                    if ctx.menu_item("物理层交互矩阵  Physics Layer Matrix", "", is_tag_layer_open, True):
-                        self._open_tag_layer_settings(True)
+                    if ctx.menu_item("物理层交互矩阵  Physics Layer Matrix", "", self._physics_layer_matrix.is_open, True):
+                        self._toggle_physics_layer_matrix()
                 ctx.end_menu()
 
             # Window menu - show all registered window types
@@ -98,7 +99,8 @@ class MenuBarPanel(InfGUIRenderable):
                 
                 ctx.separator()
                 if ctx.menu_item("Reset Layout", "", False, True):
-                    print("Reset layout")
+                    if self.__window_manager:
+                        self.__window_manager.reset_layout()
                 
                 ctx.end_menu()
 
@@ -106,6 +108,7 @@ class MenuBarPanel(InfGUIRenderable):
 
         # Render Build Settings floating window (not docked)
         self._build_settings.render(ctx)
+        self._physics_layer_matrix.render(ctx)
 
         # Render save-confirmation modal (if pending)
         if self._scene_file_manager:

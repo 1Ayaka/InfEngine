@@ -253,6 +253,10 @@ class Engine():
     def unregister_gui(self, name: str):
         self._engine.unregister_gui_renderable(name)
         self._gui_objects.pop(name, None)
+
+    def reset_imgui_layout(self):
+        """Clear ImGui docking layout (in-memory + on disk)."""
+        self._engine.reset_imgui_layout()
     
     def show(self):
         self._engine.show()

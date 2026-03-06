@@ -37,6 +37,8 @@ class WindowManager:
         self._registered_types: Dict[str, WindowInfo] = {}  # type_id -> WindowInfo
         self._open_windows: Dict[str, bool] = {}  # window_id -> is_open
         self._window_instances: Dict[str, InfGUIRenderable] = {}  # window_id -> instance
+        self._default_instances: Dict[str, InfGUIRenderable] = {}  # window_id -> original instance
+        self._imgui_ini_path: Optional[str] = None
         WindowManager._instance = self
     
     @classmethod
@@ -132,7 +134,36 @@ class WindowManager:
         """
         self._window_instances[window_id] = instance
         self._open_windows[window_id] = True
+        self._default_instances[window_id] = instance
         
         # Store type_id association if provided
         if type_id:
             instance._window_type_id = type_id
+
+    def set_imgui_ini_path(self, path: str):
+        """Set the imgui.ini path used for docking layout persistence."""
+        self._imgui_ini_path = path
+
+    def reset_layout(self):
+        """Reset to default layout: re-open all default panels, clear ImGui docking state."""
+        import os
+        # 1. Close any dynamically-opened windows (not part of default set)
+        dynamic_ids = [wid for wid in list(self._open_windows) if wid not in self._default_instances]
+        for wid in dynamic_ids:
+            self.close_window(wid)
+
+        # 2. Force ALL default panels to be open and registered
+        for window_id, instance in self._default_instances.items():
+            # Ensure the panel considers itself open
+            if hasattr(instance, '_is_open'):
+                instance._is_open = True
+            # If the window was closed (unregistered), re-register it
+            if not self._open_windows.get(window_id, False):
+                self._window_instances[window_id] = instance
+                self._open_windows[window_id] = True
+                if hasattr(instance, 'set_window_manager'):
+                    instance.set_window_manager(self)
+                self._engine.register_gui(window_id, instance)
+
+        # 3. Clear ImGui in-memory docking layout + delete ini file (C++ side)
+        self._engine.reset_imgui_layout()

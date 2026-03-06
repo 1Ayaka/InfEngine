@@ -95,6 +95,7 @@ class RenderStack(InfComponent):
     _pass_entries: List[PassEntry] = None  # initialized properly in awake()
     _pipeline_param_store: Dict[str, Dict[str, object]] = None
     _pipeline_catalog_signature: tuple = ()
+    _topology_probe_cache = None
 
     # ==================================================================
     # Lifecycle
@@ -106,9 +107,12 @@ class RenderStack(InfComponent):
         如果当前场景已存在另一个 RenderStack，输出错误日志
         并尝试移除自身（只允许一个 RenderStack per scene）。
         """
-        # Initialize instance-level fields (not serialized)
-        self._pass_entries: List[PassEntry] = []
-        self._pipeline_param_store = {}
+        # Initialize instance-level fields (not serialized), but do NOT
+        # stomp values already restored by on_after_deserialize().
+        if self._pass_entries is None:
+            self._pass_entries = []
+        if self._pipeline_param_store is None:
+            self._pipeline_param_store = {}
         self._pipeline_catalog_signature = ()
         self._register_pipeline_catalog_reload()
         self._sync_pipeline_catalog()
@@ -165,6 +169,11 @@ class RenderStack(InfComponent):
         # Ensure _pass_entries is initialized (may be called before awake())
         if self._pass_entries is None:
             self._pass_entries = []
+        else:
+            # Scene / project reopen can invoke deserialization multiple times
+            # during object reconstruction. Always rebuild from JSON instead of
+            # appending onto previously restored runtime state.
+            self._pass_entries.clear()
         if self._pipeline_param_store is None:
             self._pipeline_param_store = {}
 
@@ -182,6 +191,7 @@ class RenderStack(InfComponent):
 
         all_passes = discover_passes()
         items = _json.loads(self.mounted_passes_json)
+        restored_keys = set()
         for item in items:
             cls_name = item.get("class", "")
             cls = all_passes.get(cls_name)
@@ -209,6 +219,10 @@ class RenderStack(InfComponent):
                 order=item.get("order", 0),
             )
             inst.enabled = entry.enabled
+            key = (inst.injection_point, inst.name)
+            if key in restored_keys:
+                continue
+            restored_keys.add(key)
             self._pass_entries.append(entry)
         if self._pass_entries:
             self.invalidate_graph()
@@ -284,6 +298,10 @@ class RenderStack(InfComponent):
         valid_points = {p.name for p in self.injection_points}
         if render_pass.injection_point not in valid_points:
             return False
+        for entry in self._pass_entries:
+            if (entry.render_pass.injection_point == render_pass.injection_point and
+                    entry.render_pass.name == render_pass.name):
+                return False
         entry = PassEntry(
             render_pass=render_pass,
             enabled=render_pass.enabled,
@@ -341,9 +359,13 @@ class RenderStack(InfComponent):
         Used by ``injection_points`` and the inspector renderer to display
         the same sequence the pipeline explicitly defines.
         """
+        if self._topology_probe_cache is not None:
+            return self._topology_probe_cache
+
         from InfEngine.rendergraph.graph import RenderGraph
         g = RenderGraph("_FullTopologyProbe")
         self.pipeline.define_topology(g)
+        self._topology_probe_cache = g
         return g
 
     def invalidate_graph(self) -> None:
@@ -356,6 +378,7 @@ class RenderStack(InfComponent):
         """
         self._graph_desc = None
         self._build_failed = False  # allow retry after explicit invalidation
+        self._topology_probe_cache = None
 
     def build_graph(self):  # -> RenderGraphDescription
         """构建完整的 RenderGraph。
@@ -499,11 +522,13 @@ class RenderStack(InfComponent):
     def _on_pipeline_file_changed(self, file_path: str) -> None:
         """Watchdog callback — called on main thread when pipeline source is saved."""
         import importlib
+        from InfEngine.renderstack.discovery import invalidate_discovery_cache
         mod = self._pipeline_module
         if mod is None:
             return
         print(f"[RenderStack] Pipeline file changed, reloading...", file=sys.stderr)
         self._save_current_pipeline_params()
+        invalidate_discovery_cache()
         importlib.reload(mod)
         self._pipeline = None   # re-instantiate on next .pipeline access
         self.invalidate_graph() # clears _build_failed + _graph_desc
@@ -550,6 +575,8 @@ class RenderStack(InfComponent):
 
     def _on_script_catalog_changed(self, file_path: str, event_type: str) -> None:
         """ResourcesManager callback for create/delete/move/modify of python scripts."""
+        from InfEngine.renderstack.discovery import invalidate_discovery_cache
+        invalidate_discovery_cache()
         self._sync_pipeline_catalog()
 
     def _pipeline_key(self, pipeline_name: str) -> str:

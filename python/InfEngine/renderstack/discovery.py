@@ -17,7 +17,18 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
-from typing import Dict, Set, Type
+from typing import Dict, Optional, Set, Type
+
+
+_pipeline_cache: Optional[Dict[str, type]] = None
+_pass_cache: Optional[Dict[str, type]] = None
+
+
+def invalidate_discovery_cache() -> None:
+    """Clear cached pipeline/pass discovery results."""
+    global _pipeline_cache, _pass_cache
+    _pipeline_cache = None
+    _pass_cache = None
 
 
 def discover_pipelines() -> Dict[str, type]:
@@ -30,13 +41,18 @@ def discover_pipelines() -> Dict[str, type]:
         ``{pipeline.name: pipeline_class}`` dictionary.
         Excludes classes whose ``name`` starts with ``"_"``.
     """
+    global _pipeline_cache
+    if _pipeline_cache is not None:
+        return dict(_pipeline_cache)
+
     from InfEngine.rendering.render_pipeline import RenderPipeline
 
     _ensure_user_scripts_loaded("RenderPipeline")
 
     result: Dict[str, type] = {}
     _collect_subclasses(RenderPipeline, result, name_attr="name")
-    return result
+    _pipeline_cache = result
+    return dict(result)
 
 
 def discover_passes() -> Dict[str, type]:
@@ -50,13 +66,18 @@ def discover_passes() -> Dict[str, type]:
         Excludes abstract bases (GeometryPass)
         and classes whose ``name`` is empty or starts with ``"_"``.
     """
+    global _pass_cache
+    if _pass_cache is not None:
+        return dict(_pass_cache)
+
     from InfEngine.renderstack.render_pass import RenderPass
 
     _ensure_user_scripts_loaded("RenderPass", "GeometryPass", "FullScreenEffect")
 
     result: Dict[str, type] = {}
     _collect_subclasses(RenderPass, result, name_attr="name")
-    return result
+    _pass_cache = result
+    return dict(result)
 
 
 # -- Internal helpers -------------------------------------------------------

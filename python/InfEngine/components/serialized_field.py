@@ -88,7 +88,7 @@ class SerializedFieldDescriptor:
     def __set_name__(self, owner: Type, name: str):
         self.metadata.name = name
         # Register this field in the owner class
-        if not hasattr(owner, '_serialized_fields_'):
+        if '_serialized_fields_' not in owner.__dict__:
             owner._serialized_fields_ = {}
         owner._serialized_fields_[name] = self.metadata
     

@@ -39,6 +39,7 @@ from InfEngine.renderstack.render_pass import RenderPass
 from InfEngine.renderstack.geometry_pass import GeometryPass
 from InfEngine.renderstack.fullscreen_effect import FullScreenEffect
 from InfEngine.renderstack.bloom_effect import BloomEffect
+from InfEngine.renderstack.tonemapping_effect import ToneMappingEffect
 from InfEngine.renderstack.render_stack import RenderStack, PassEntry
 from InfEngine.renderstack.render_stack_pipeline import RenderStackPipeline
 from InfEngine.renderstack.default_forward_pipeline import DefaultForwardPipeline
@@ -60,6 +61,7 @@ __all__ = [
     "GeometryPass",
     "FullScreenEffect",
     "BloomEffect",
+    "ToneMappingEffect",
     # Built-in passes (registry)
     "BUILTIN_PASSES",
     # Discovery

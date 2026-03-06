@@ -11,3 +11,14 @@ from InfEngine import renderstack  # RenderStack: scene-level render configurati
 from InfEngine import scene  # Phase 4: Tag & Layer query utilities
 from InfEngine import input  # Unified input system (Unity-style API)
 from InfEngine import ui  # Phase 0: Canvas/Text + layout foundation
+from InfEngine.timing import Time          # Unity-style static Time class
+from InfEngine.mathf import Mathf          # Unity-style math utilities
+from InfEngine.coroutine import (          # Coroutine yield instructions
+    Coroutine,
+    WaitForSeconds,
+    WaitForSecondsRealtime,
+    WaitForEndOfFrame,
+    WaitForFixedUpdate,
+    WaitUntil,
+    WaitWhile,
+)

@@ -1,7 +1,7 @@
 """Custom Inspector renderer for the RenderStack component.
 
-Displays the pipeline topology with injection points, each having a [+]
-button to add post-processing effects via a categorised popup menu
+Displays the pipeline topology with injection points, each having an
+'Add Effect' button to add post-processing effects via a categorised popup menu
 (similar to Unity's GlobalVolume system).
 
 Mounted effects are displayed as collapsible sections with editable
@@ -14,21 +14,65 @@ from typing import Dict, List, TYPE_CHECKING
 
 from InfEngine.lib import InfGUIContext
 from .inspector_utils import max_label_w, field_label
-from .theme import ImGuiCol, ImGuiTreeNodeFlags
+from .theme import ImGuiCol, ImGuiTreeNodeFlags, ImGuiStyleVar
 
 if TYPE_CHECKING:
     from InfEngine.renderstack.render_stack import RenderStack, PassEntry
 
 
-# =====================================================================
-# Colours
-# =====================================================================
+_COL_DIM = (0.55, 0.55, 0.55, 1.0)
 
-_COL_DIM   = (0.55, 0.55, 0.55, 1.0)
-_COL_IP    = (0.45, 0.70, 0.95, 1.0)   # injection point
-_COL_PASS  = (0.78, 0.78, 0.78, 1.0)   # pipeline fixed pass
-_COL_ERR   = (1.00, 0.40, 0.40, 1.0)
-_COL_GREEN = (0.40, 0.80, 0.40, 1.0)   # + button
+
+def _get_effect_candidates(ip_name: str) -> Dict[str, type]:
+    """Return FullScreenEffect classes valid for this injection point."""
+    from InfEngine.renderstack.discovery import discover_passes
+    from InfEngine.renderstack.fullscreen_effect import FullScreenEffect
+
+    candidates: Dict[str, type] = {}
+    for name, cls in discover_passes().items():
+        if not issubclass(cls, FullScreenEffect):
+            continue
+        if cls.injection_point != ip_name:
+            continue
+        candidates[name] = cls
+    return candidates
+
+
+def _get_addable_effect_candidates(stack: "RenderStack", ip_name: str) -> Dict[str, type]:
+    """Return candidates that are not already mounted on the stack."""
+    mounted_names = {e.render_pass.name for e in stack.pass_entries}
+    return {
+        name: cls
+        for name, cls in _get_effect_candidates(ip_name).items()
+        if name not in mounted_names
+    }
+
+
+def _render_pass_bar(ctx: InfGUIContext, label: str, uid: int) -> None:
+    """Render a standard pipeline pass as a simple read-only bullet."""
+    ctx.push_style_color(ImGuiCol.Text, *_COL_DIM)
+    ctx.tree_node_ex(
+        f"{label}##pass_{uid}",
+        ImGuiTreeNodeFlags.NoTreePushOnOpen
+        | ImGuiTreeNodeFlags.Leaf
+        | ImGuiTreeNodeFlags.Bullet
+        | ImGuiTreeNodeFlags.SpanAvailWidth,
+    )
+    ctx.pop_style_color(1)
+
+
+def _pretty_field_name(name: str) -> str:
+    """Convert snake_case field names to a readable inspector label."""
+    return name.replace("_", " ").strip().title()
+
+
+def _effect_field_label(ctx: InfGUIContext, label: str, width: float) -> None:
+    """Render a left label that respects the current tree indentation."""
+    start_x = ctx.get_cursor_pos_x()
+    ctx.align_text_to_frame_padding()
+    ctx.label(label)
+    ctx.same_line(start_x + width)
+    ctx.set_next_item_width(-1)
 
 
 def render_renderstack_inspector(ctx: InfGUIContext, stack: "RenderStack") -> None:
@@ -210,7 +254,7 @@ def _render_pipeline_params(ctx: InfGUIContext, stack: "RenderStack") -> None:
 # =====================================================================
 
 def _render_topology_with_effects(ctx: InfGUIContext, stack: "RenderStack") -> None:
-    """Render topology sequence with [+] buttons at injection points.
+    """Render topology sequence as thin coloured bars.
 
     Each injection point gets a [+] button that opens a popup for adding
     effects.  Mounted effects appear as collapsible sections below the
@@ -238,20 +282,22 @@ def _render_topology_with_effects(ctx: InfGUIContext, stack: "RenderStack") -> N
     for ip in ip_list:
         display_to_name[ip.display_name] = ip.name
 
+    # Reduce vertical spacing between bars
+    ctx.push_style_var_vec2(ImGuiStyleVar.ItemSpacing, 4.0, 2.0)
+
+    # Running counter to guarantee unique IDs even when labels collide
+    _uid_counter = 0
+
     for kind, label in seq:
+        _uid_counter += 1
         if kind == "ip":
             ip_name = display_to_name.get(label, label)
-            _render_injection_point_row(ctx, stack, ip_name, label)
-
-            # Render mounted effects at this injection point
-            mounted = ip_entries.get(ip_name, [])
-            for entry in mounted:
-                _render_mounted_effect(ctx, stack, entry)
+            _render_injection_point_row(ctx, stack, ip_name, label, _uid_counter, ip_entries.get(ip_name, []))
         else:
-            # Regular pipeline pass
-            ctx.push_style_color(ImGuiCol.Text, *_COL_PASS)
-            ctx.label(f"    {label}")
-            ctx.pop_style_color(1)
+            # Regular pipeline pass — thin bar
+            _render_pass_bar(ctx, label, _uid_counter)
+
+    ctx.pop_style_var(1)
 
 
 def _render_injection_point_row(
@@ -259,48 +305,60 @@ def _render_injection_point_row(
     stack: "RenderStack",
     ip_name: str,
     display_label: str,
+    uid: int,
+    mounted: List,
 ) -> None:
-    """Render an injection point label with a [+] button on the right."""
-    popup_id = f"##add_fx_{ip_name}"
+    """Render an injection point as a collapsible bar."""
+    popup_id = f"Popup_{uid}_{ip_name}"
+    has_addable_effects = bool(_get_addable_effect_candidates(stack, ip_name))
 
-    # [+] button first (will be repositioned via same_line)
-    ctx.push_style_color(ImGuiCol.Text, *_COL_IP)
-    ctx.label(f"  > {display_label}")
+    ctx.push_style_color(ImGuiCol.Text, 0.9, 0.9, 0.9, 1.0)
+    flags = ImGuiTreeNodeFlags.Framed | ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanAvailWidth
+    header_open = ctx.tree_node_ex(f"[{display_label}]##ip_hdr_{uid}_{ip_name}", flags)
     ctx.pop_style_color(1)
 
-    # [+] button on the same line, right-aligned
-    ctx.same_line(ctx.get_content_region_avail_width() + 4.0)
-    ctx.push_style_color(ImGuiCol.Text, *_COL_GREEN)
-    ctx.button(f"+##{ip_name}_add", width=20.0, height=20.0)
-    if ctx.is_item_clicked(0):
-        ctx.open_popup(popup_id)
-    ctx.pop_style_color(1)
+    if header_open:
+        if mounted:
+            ctx.dummy(0, 2)
+            ctx.push_style_var_vec2(ImGuiStyleVar.ItemSpacing, 4.0, 4.0)
+            for idx, entry in enumerate(mounted):
+                _render_mounted_effect(ctx, stack, entry, uid * 100 + idx)
+            ctx.pop_style_var(1)
+            ctx.dummy(0, 4)
 
-    # Popup for adding effects
-    if ctx.begin_popup(popup_id):
-        _render_add_effect_popup(ctx, stack, ip_name)
-        ctx.end_popup()
+        # "Add Effect" button at the bottom of this injection point
+        ctx.push_style_var_vec2(ImGuiStyleVar.FramePadding, 0.0, 4.0)
+        _btn_x = ctx.get_cursor_pos_x()
+        ctx.set_cursor_pos_x(0.0)
+        if not has_addable_effects:
+            ctx.begin_disabled(True)
+        ctx.button(
+            f"Add Effect...##add_{uid}_{ip_name}",
+            lambda: ctx.open_popup(popup_id),
+            -1,
+            0,
+        )
+        if not has_addable_effects:
+            ctx.end_disabled()
+        ctx.set_cursor_pos_x(_btn_x)
+        ctx.pop_style_var(1)
+
+        # Popup for adding effects
+        if ctx.begin_popup(popup_id):
+            _render_add_effect_popup(ctx, stack, ip_name, uid)
+            ctx.end_popup()
+
+        ctx.tree_pop()
 
 
 def _render_add_effect_popup(
     ctx: InfGUIContext,
     stack: "RenderStack",
     ip_name: str,
+    uid: int,
 ) -> None:
     """Render the categorised effect-selection popup (like Unity Volume)."""
-    from InfEngine.renderstack.discovery import discover_passes
-    from InfEngine.renderstack.fullscreen_effect import FullScreenEffect
-
-    all_passes = discover_passes()
-
-    # Filter to effects that target this injection point
-    candidates = {}
-    for name, cls in all_passes.items():
-        if not issubclass(cls, FullScreenEffect):
-            continue
-        if cls.injection_point != ip_name:
-            continue
-        candidates[name] = cls
+    candidates = _get_effect_candidates(ip_name)
 
     if not candidates:
         ctx.push_style_color(ImGuiCol.Text, *_COL_DIM)
@@ -332,7 +390,7 @@ def _render_add_effect_popup(
             already = full_name in mounted_names
             if already:
                 ctx.begin_disabled(True)
-            if ctx.selectable(f"  {leaf}##add_{full_name}"):
+            if ctx.selectable(f"  {leaf}##add_{uid}_{full_name}"):
                 _add_effect(stack, cls)
                 ctx.close_current_popup()
             if already:
@@ -347,7 +405,7 @@ def _render_add_effect_popup(
             already = full_name in mounted_names
             if already:
                 ctx.begin_disabled(True)
-            if ctx.selectable(f"  {leaf}##add_{full_name}"):
+            if ctx.selectable(f"  {leaf}##add_{uid}_{full_name}"):
                 _add_effect(stack, cls)
                 ctx.close_current_popup()
             if already:
@@ -357,9 +415,10 @@ def _render_add_effect_popup(
 def _add_effect(stack: "RenderStack", cls: type) -> None:
     """Instantiate and mount an effect onto the stack."""
     inst = cls()
-    if not stack.add_pass(inst):
+    success = stack.add_pass(inst)
+    if not success:
         import sys
-        print(f"[RenderStack] add_pass failed for '{inst.name}'", file=sys.stderr)
+        print(f"[RenderStack] add_pass failed for '{inst.name}' at injection point '{inst.injection_point}'", file=sys.stderr)
 
 
 # =====================================================================
@@ -370,48 +429,42 @@ def _render_mounted_effect(
     ctx: InfGUIContext,
     stack: "RenderStack",
     entry,
+    uid: int = 0,
 ) -> None:
-    """Render a single mounted effect as a collapsible section.
-
-    Layout (similar to Unity Volume override):
-        [▶] [☑] Bloom
-             threshold:  [===1.0===]
-             intensity:  [===0.8===]
-             ...
-    """
+    """Render a single mounted effect as a standard InfComponent-like section."""
     from InfEngine.renderstack.fullscreen_effect import FullScreenEffect
 
     rp = entry.render_pass
     effect_name = rp.name
     is_effect = isinstance(rp, FullScreenEffect)
 
-    ctx.push_id_str(f"fx_{effect_name}")
+    ctx.push_id_str(f"fx_{uid}_{effect_name}")
 
-    # ---- Header with tree node + enable checkbox ----
-    ctx.set_next_item_allow_overlap()
-    flags = ImGuiTreeNodeFlags.AllowOverlap | ImGuiTreeNodeFlags.DefaultOpen
-    header_open = ctx.tree_node_ex(f"    {effect_name}##hdr", flags)
-
-    # Enable checkbox on the same line (overlapping the tree node label area)
-    ctx.same_line(24.0)
-    new_enabled = ctx.checkbox(f"##en_{effect_name}", entry.enabled)
+    new_enabled = ctx.checkbox(f"##en_{uid}_{effect_name}", entry.enabled)
     if new_enabled != entry.enabled:
         stack.set_pass_enabled(effect_name, new_enabled)
 
+    ctx.same_line(0, 6)
+    flags = (
+        ImGuiTreeNodeFlags.DefaultOpen
+        | ImGuiTreeNodeFlags.Framed
+        | ImGuiTreeNodeFlags.SpanFullWidth
+    )
+    header_open = ctx.tree_node_ex(f"{effect_name}##hdr_{uid}", flags)
+
     # Right-click context menu for removal
-    if ctx.begin_popup_context_item(f"##ctx_{effect_name}"):
-        if ctx.selectable("Remove"):
+    if ctx.begin_popup_context_item(f"ctx_{uid}_{effect_name}"):
+        if ctx.selectable(f"Remove##{uid}"):
             stack.remove_pass(effect_name)
             ctx.close_current_popup()
         ctx.end_popup()
 
     if header_open:
-        # Render parameters (always visible, dimmed if disabled)
         if not entry.enabled:
             ctx.begin_disabled(True)
 
         if is_effect:
-            _render_effect_params(ctx, stack, rp)
+            _render_effect_params(ctx, stack, rp, uid)
         else:
             ctx.push_style_color(ImGuiCol.Text, *_COL_DIM)
             ctx.label(f"  injection: {rp.injection_point}")
@@ -434,17 +487,21 @@ def _render_effect_params(
     ctx: InfGUIContext,
     stack: "RenderStack",
     effect,
+    uid: int = 0,
 ) -> None:
     """Render editable serialized fields for a FullScreenEffect instance."""
-    from InfEngine.components.serialized_field import get_serialized_fields, FieldType
+    from InfEngine.components.serialized_field import FieldType
 
-    fields = get_serialized_fields(effect.__class__)
+    fields = dict(getattr(effect.__class__, '_serialized_fields_', {}))
     if not fields:
         return
 
-    lw = max_label_w(ctx, list(fields.keys())) if fields else 0.0
+    labels = [_pretty_field_name(name) for name in fields.keys()]
+    lw = max(170.0, max_label_w(ctx, labels)) if fields else 170.0
 
     for field_name, metadata in fields.items():
+        wid = f"##ef_{uid}_{field_name}"
+        display_name = _pretty_field_name(field_name)
         if metadata.header:
             ctx.separator()
             ctx.label(metadata.header)
@@ -455,52 +512,52 @@ def _render_effect_params(
         new_value = current_value
 
         if metadata.field_type == FieldType.FLOAT:
-            field_label(ctx, field_name, lw)
+            _effect_field_label(ctx, display_name, lw)
             _speed = getattr(metadata, 'drag_speed', None) or 0.1
             _slider = getattr(metadata, 'slider', True)
             if metadata.range:
                 if _slider:
                     new_value = ctx.float_slider(
-                        f"##ef_{field_name}", float(current_value),
+                        wid, float(current_value),
                         metadata.range[0], metadata.range[1],
                     )
                 else:
                     new_value = ctx.drag_float(
-                        f"##ef_{field_name}", float(current_value), _speed,
+                        wid, float(current_value), _speed,
                         metadata.range[0], metadata.range[1],
                     )
             else:
                 new_value = ctx.drag_float(
-                    f"##ef_{field_name}", float(current_value), _speed, -1e6, 1e6,
+                    wid, float(current_value), _speed, -1e6, 1e6,
                 )
 
         elif metadata.field_type == FieldType.INT:
-            field_label(ctx, field_name, lw)
+            _effect_field_label(ctx, display_name, lw)
             _speed = getattr(metadata, 'drag_speed', None) or 1.0
             _slider = getattr(metadata, 'slider', True)
             if metadata.range:
                 if _slider:
                     new_value = int(ctx.float_slider(
-                        f"##ef_{field_name}", float(current_value),
+                        wid, float(current_value),
                         metadata.range[0], metadata.range[1],
                     ))
                 else:
                     new_value = int(ctx.drag_float(
-                        f"##ef_{field_name}", float(current_value), _speed,
+                        wid, float(current_value), _speed,
                         metadata.range[0], metadata.range[1],
                     ))
             else:
                 new_value = int(ctx.drag_float(
-                    f"##ef_{field_name}", float(current_value), _speed, -1e6, 1e6,
+                    wid, float(current_value), _speed, -1e6, 1e6,
                 ))
 
         elif metadata.field_type == FieldType.BOOL:
-            new_value = ctx.checkbox(field_name, bool(current_value))
+            new_value = ctx.checkbox(display_name, bool(current_value))
 
         elif metadata.field_type == FieldType.STRING:
-            field_label(ctx, field_name, lw)
+            _effect_field_label(ctx, display_name, lw)
             new_value = ctx.text_input(
-                f"##ef_{field_name}",
+                wid,
                 str(current_value) if current_value else "", 256,
             )
 
@@ -510,25 +567,25 @@ def _render_effect_params(
                 members = list(enum_cls)
                 names_list = [m.name for m in members]
                 current_idx = members.index(current_value) if current_value in members else 0
-                field_label(ctx, field_name, lw)
-                new_idx = ctx.combo(f"##ef_{field_name}", current_idx, names_list, -1)
+                _effect_field_label(ctx, display_name, lw)
+                new_idx = ctx.combo(wid, current_idx, names_list, -1)
                 if new_idx != current_idx:
                     new_value = members[new_idx]
             else:
-                ctx.label(f"{field_name}: {current_value}")
+                ctx.label(f"{display_name}: {current_value}")
 
         elif metadata.field_type == FieldType.COLOR:
             if current_value is not None:
                 r, g, b, a = current_value[0], current_value[1], current_value[2], current_value[3]
             else:
                 r, g, b, a = 1.0, 1.0, 1.0, 1.0
-            field_label(ctx, field_name, lw)
-            nr, ng, nb, na = ctx.color_edit(f"##ef_{field_name}", r, g, b, a)
+            _effect_field_label(ctx, display_name, lw)
+            nr, ng, nb, na = ctx.color_edit(wid, r, g, b, a)
             if (nr, ng, nb, na) != (r, g, b, a):
                 new_value = [nr, ng, nb, na]
 
         else:
-            ctx.label(f"{field_name}: {current_value}")
+            ctx.label(f"{display_name}: {current_value}")
 
         # Apply change + invalidate graph
         _changed = False
