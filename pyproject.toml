@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "InfEngine"
+version = "0.1.0"
+description = "Infernux Engine - An AI-native game engine built with Vulkan & C++, with a Python frontend for scripting and AI integration."
+authors = [{name = "Lizhe Chen", email = "chenlizheme@outlook.com"}]
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+
+[tool.setuptools]
+packages = {find = {where = ["python"], exclude = ["*.__pycache__", "*.__pycache__.*"]}}
+package-dir = {"" = "python"}
+include-package-data = true
+
+[tool.setuptools.package-data]
+InfEngine = ["py.typed", "*.pyi", "**/*.pyi", "*.dll", "*.pyd", "resources/icons/*.png", "resources/fonts/*.otf", "resources/fonts/*.ttf", "resources/pictures/*.png"]

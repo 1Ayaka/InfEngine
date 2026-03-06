@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+set -eu
+
+if ! command -v clang-format >/dev/null 2>&1; then
+  echo "[pre-push] clang-format not found in PATH."
+  echo "[pre-push] Install clang-format and retry push."
+  exit 1
+fi
+
+fail=0
+checked=0
+
+while IFS= read -r file; do
+  case "$file" in
+    cpp/*.cpp|cpp/*.h|cpp/*.hpp)
+      checked=$((checked + 1))
+      if ! clang-format --dry-run --Werror "$file" >/dev/null 2>&1; then
+        echo "[pre-push] Format check failed: $file"
+        fail=1
+      fi
+      ;;
+  esac
+done <<EOF
+$(git ls-files)
+EOF
+
+if [ "$checked" -eq 0 ]; then
+  exit 0
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "[pre-push] clang-format check failed. Run: cmake --build --preset format"
+  exit 1
+fi
+
+echo "[pre-push] clang-format check passed ($checked files)."

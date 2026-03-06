@@ -1,0 +1,159 @@
+"""
+Component decorators for InfEngine.
+
+Provides Unity-style component attributes:
+    - @require_component: Declare dependency on another component type
+    - @disallow_multiple: Prevent multiple instances of this component on a GameObject
+    - @execute_in_edit_mode: Allow update() to run in edit mode
+
+Example:
+    from InfEngine.components import InfComponent
+    from InfEngine.components.decorators import require_component, disallow_multiple
+    
+    @require_component(Rigidbody)
+    @disallow_multiple
+    class CharacterController(InfComponent):
+        def start(self):
+            self.rb = self.get_component(Rigidbody)
+"""
+
+from typing import Type, Union, Callable
+
+
+def require_component(*component_types: Type) -> Callable:
+    """
+    Decorator to declare that a component requires other component types.
+    
+    When this component is added to a GameObject, the engine will automatically
+    add the required components if they don't already exist.
+    
+    Args:
+        *component_types: One or more component types that are required
+        
+    Example:
+        @require_component(Rigidbody, Collider)
+        class PhysicsController(InfComponent):
+            pass
+    """
+    def decorator(cls):
+        # Initialize or extend the _require_components_ list
+        if not hasattr(cls, '_require_components_'):
+            cls._require_components_ = []
+        
+        # Add all specified types (avoid duplicates)
+        for comp_type in component_types:
+            if comp_type not in cls._require_components_:
+                cls._require_components_.append(comp_type)
+        
+        return cls
+    return decorator
+
+
+def disallow_multiple(cls: Type = None) -> Union[Type, Callable]:
+    """
+    Decorator to prevent multiple instances of this component on a GameObject.
+    
+    When attempting to add a second instance of this component type, the
+    engine will reject it and return None (with a warning).
+    
+    Can be used with or without parentheses:
+        @disallow_multiple
+        class MySingleton(InfComponent): pass
+        
+        @disallow_multiple()
+        class MySingleton(InfComponent): pass
+    """
+    def apply(cls):
+        cls._disallow_multiple_ = True
+        return cls
+    
+    # Support both @disallow_multiple and @disallow_multiple()
+    if cls is not None:
+        return apply(cls)
+    return apply
+
+
+def execute_in_edit_mode(cls: Type = None) -> Union[Type, Callable]:
+    """
+    Decorator to allow a component's update() to run in edit mode.
+    
+    By default, update() only runs during play mode. This decorator
+    enables update() to also run in the editor for preview/gizmo purposes.
+    
+    Example:
+        @execute_in_edit_mode
+        class PreviewComponent(InfComponent):
+            def update(self, delta_time):
+                # This runs even in edit mode
+                pass
+    """
+    def apply(cls):
+        cls._execute_in_edit_mode_ = True
+        return cls
+    
+    if cls is not None:
+        return apply(cls)
+    return apply
+
+
+def add_component_menu(path: str) -> Callable:
+    """
+    Decorator to specify where this component appears in the Add Component menu.
+    
+    Args:
+        path: Menu path like "Physics/Character Controller"
+        
+    Example:
+        @add_component_menu("Custom/My Components/Special Controller")
+        class SpecialController(InfComponent):
+            pass
+    """
+    def decorator(cls):
+        cls._component_menu_path_ = path
+        return cls
+    return decorator
+
+
+def icon(icon_path: str) -> Callable:
+    """
+    Decorator to specify a custom icon for this component in the inspector.
+    
+    Args:
+        icon_path: Path to the icon image (relative to project assets)
+        
+    Example:
+        @icon("icons/custom_component.png")
+        class CustomComponent(InfComponent):
+            pass
+    """
+    def decorator(cls):
+        cls._component_icon_ = icon_path
+        return cls
+    return decorator
+
+
+def help_url(url: str) -> Callable:
+    """
+    Decorator to specify a help URL for this component.
+    
+    Args:
+        url: URL to documentation
+        
+    Example:
+        @help_url("https://docs.myengine.com/components/player")
+        class PlayerController(InfComponent):
+            pass
+    """
+    def decorator(cls):
+        cls._help_url_ = url
+        return cls
+    return decorator
+
+
+# Convenience aliases for Unity-style naming
+RequireComponent = require_component
+DisallowMultipleComponent = disallow_multiple
+ExecuteInEditMode = execute_in_edit_mode
+AddComponentMenu = add_component_menu
+HelpURL = help_url
+Icon = icon

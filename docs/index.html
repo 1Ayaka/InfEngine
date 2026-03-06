@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infernux Engine - The AI-Native Game Engine</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="#" class="nav-logo">
+                <span class="logo-icon">🔥</span>
+                <span class="logo-text">Infernux</span>
+            </a>
+            <div class="nav-links">
+                <a href="#home" data-i18n="nav.home">Home</a>
+                <a href="#features" data-i18n="nav.features">Features</a>
+                <a href="#showcase" data-i18n="nav.showcase">Showcase</a>
+                <a href="roadmap.html" data-i18n="nav.roadmap">Roadmap</a>
+                <a href="wiki/site/en/api/index.html" data-i18n="nav.api">API Reference</a>
+                <a href="https://github.com/ChenlizheMe/InfEngine" target="_blank">
+                    <i class="fab fa-github"></i> GitHub
+                </a>
+            </div>
+            <div class="nav-right">
+                <button class="lang-toggle" onclick="toggleLanguage()">
+                    <span id="lang-text">中文</span>
+                </button>
+                <button class="mobile-menu-btn" onclick="toggleMobileMenu()">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section id="home" class="hero">
+        <div class="hero-bg"></div>
+        <div class="container hero-grid">
+            <div class="hero-content">
+                <h1 class="hero-title">
+                    <span class="gradient-text">Infernux Engine</span>
+                </h1>
+                <p class="hero-subtitle" data-i18n="hero.subtitle">
+                    The AI-Native Game Engine for the Next Generation
+                </p>
+                <p class="hero-description" data-i18n="hero.description">
+                    Built with Vulkan & C++17 for performance, Python 3.12+ for accessibility.<br>
+                    Write game logic in Python. Natively integrate ML models. Vibe Code your games.
+                </p>
+                <p class="hero-reference">
+                    <i class="fas fa-graduation-cap"></i>
+                    <span data-i18n="hero.reference">Architecture inspired by Xi Wang's </span>
+                    <a href="https://games104.boomingtech.com/" target="_blank" rel="noopener">Games104</a>
+                    <span data-i18n="hero.reference2"> course</span>
+                </p>
+                <div class="hero-buttons">
+                    <a href="https://github.com/ChenlizheMe/InfEngine" class="btn btn-primary" target="_blank">
+                        <i class="fab fa-github"></i> <span data-i18n="hero.viewGithub">View on GitHub</span>
+                    </a>
+                    <a href="roadmap.html" class="btn btn-secondary" data-i18n="hero.roadmap">
+                        Roadmap
+                    </a>
+                </div>
+                <div class="hero-badges">
+                    <img src="https://img.shields.io/badge/version-0.1.0-brightgreen.svg" alt="v0.1.0">
+                    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License">
+                    <img src="https://img.shields.io/badge/Python-3.12+-blue.svg" alt="Python 3.12+">
+                    <img src="https://img.shields.io/badge/C++-17-00599C.svg" alt="C++17">
+                    <img src="https://img.shields.io/badge/Vulkan-Latest-red.svg" alt="Vulkan">
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="code-preview">
+                    <div class="code-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="filename">player_controller.py</span>
+                    </div>
+                    <pre><code><span class="keyword">from</span> InfEngine <span class="keyword">import</span> InfComponent, vec3f
+<span class="keyword">from</span> InfEngine.components <span class="keyword">import</span> serialized_field
+
+<span class="keyword">class</span> <span class="class-name">PlayerController</span>(InfComponent):
+    speed: <span class="type">float</span> = serialized_field(
+        default=<span class="number">5.0</span>,
+        range=(<span class="number">0</span>, <span class="number">100</span>),
+        tooltip=<span class="string">"Movement speed"</span>
+    )
+
+    <span class="keyword">def</span> <span class="function">start</span>(<span class="param">self</span>):
+        Debug.log(<span class="string">f"Speed: </span>{<span class="param">self</span>.speed}<span class="string">"</span>)
+
+    <span class="keyword">def</span> <span class="function">update</span>(<span class="param">self</span>, dt: <span class="type">float</span>):
+        pos = <span class="param">self</span>.transform.position
+        <span class="param">self</span>.transform.position = vec3f(
+            pos.x + <span class="param">self</span>.speed * dt,
+            pos.y, pos.z
+        )</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why Python Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <h2 class="section-title" data-i18n="features.title">Why Python as Game Engine Frontend?</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🤖</div>
+                    <h3 data-i18n="features.ai.title">AI Integration is Native</h3>
+                    <p data-i18n="features.ai.desc">
+                        Import PyTorch, TensorFlow, OpenCV directly in your game scripts.
+                        No plugin layer. No bridging. Just <code>import torch</code>.
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">✨</div>
+                    <h3 data-i18n="features.vibe.title">Vibe Coding Ready</h3>
+                    <p data-i18n="features.vibe.desc">
+                        LLMs generate Python more accurately than any other language.
+                        Your game logic is naturally LLM-friendly.
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3 data-i18n="features.numpy.title">NumPy Render Readback</h3>
+                    <p data-i18n="features.numpy.desc">
+                        Read render pass pixels directly as NumPy arrays.
+                        Perfect for real-time CV, RL, and GPU-to-CPU pipelines.
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎮</div>
+                    <h3 data-i18n="features.unity.title">Unity-Style API</h3>
+                    <p data-i18n="features.unity.desc">
+                        Familiar Component-GameObject architecture with lifecycle methods.
+                        URP-inspired Scriptable Render Pipeline in Python.
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔥</div>
+                    <h3 data-i18n="features.vulkan.title">Vulkan Powered</h3>
+                    <p data-i18n="features.vulkan.desc">
+                        C++17 backend with Vulkan for maximum GPU performance.
+                        Python defines what to render, C++ handles how.
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔓</div>
+                    <h3 data-i18n="features.opensource.title">Open Source</h3>
+                    <p data-i18n="features.opensource.desc">
+                        MIT licensed. No royalties, no restrictions.
+                        Full access to engine source code.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- What's Built Section -->
+    <section id="showcase" class="showcase">
+        <div class="container">
+            <h2 class="section-title" data-i18n="showcase.title">What's Already Built</h2>
+            <p class="section-subtitle" data-i18n="showcase.subtitle">
+                Infernux is more than a prototype — here's what's working today.
+            </p>
+
+            <div class="showcase-grid">
+                <!-- Rendering -->
+                <div class="showcase-card">
+                    <div class="showcase-header">
+                        <i class="fas fa-cube"></i>
+                        <h3 data-i18n="showcase.rendering.title">Rendering</h3>
+                    </div>
+                    <ul class="showcase-list">
+                        <li class="done" data-i18n="showcase.rendering.1">Vulkan forward renderer</li>
+                        <li class="done" data-i18n="showcase.rendering.2">PBR-inspired materials (metallic/roughness)</li>
+                        <li class="done" data-i18n="showcase.rendering.3">4x MSAA anti-aliasing</li>
+                        <li class="done" data-i18n="showcase.rendering.4">Directional shadow mapping (PCF)</li>
+                        <li class="done" data-i18n="showcase.rendering.5">Post-processing pipeline</li>
+                        <li class="done" data-i18n="showcase.rendering.6">Shader hot-reload & SPIR-V reflection</li>
+                        <li class="done" data-i18n="showcase.rendering.7">Selection outline & editor gizmos</li>
+                    </ul>
+                </div>
+
+                <!-- Render Architecture -->
+                <div class="showcase-card">
+                    <div class="showcase-header">
+                        <i class="fas fa-project-diagram"></i>
+                        <h3 data-i18n="showcase.arch.title">Render Architecture</h3>
+                    </div>
+                    <ul class="showcase-list">
+                        <li class="done" data-i18n="showcase.arch.1">Scriptable Render Pipeline (URP-style SRP)</li>
+                        <li class="done" data-i18n="showcase.arch.2">ScriptableRenderContext & CommandBuffer</li>
+                        <li class="done" data-i18n="showcase.arch.3">RenderGraph (Python topology → C++ DAG)</li>
+                        <li class="done" data-i18n="showcase.arch.4">Transient resource pool</li>
+                        <li class="done" data-i18n="showcase.arch.5">Frustum culling with CullingResults</li>
+                        <li class="done" data-i18n="showcase.arch.6">GPU→CPU readback as NumPy arrays</li>
+                    </ul>
+                </div>
+
+                <!-- Scene & ECS -->
+                <div class="showcase-card">
+                    <div class="showcase-header">
+                        <i class="fas fa-sitemap"></i>
+                        <h3 data-i18n="showcase.scene.title">Scene & Components</h3>
+                    </div>
+                    <ul class="showcase-list">
+                        <li class="done" data-i18n="showcase.scene.1">GameObject-Component (Unity-style)</li>
+                        <li class="done" data-i18n="showcase.scene.2">Transform hierarchy (parent-child)</li>
+                        <li class="done" data-i18n="showcase.scene.3">Light component (Directional/Point/Spot)</li>
+                        <li class="done" data-i18n="showcase.scene.4">Camera, MeshRenderer, primitives</li>
+                        <li class="done" data-i18n="showcase.scene.5">Scene serialization (JSON) & picking</li>
+                        <li class="done" data-i18n="showcase.scene.6">Play mode (snapshot & restore)</li>
+                    </ul>
+                </div>
+
+                <!-- Python Components -->
+                <div class="showcase-card">
+                    <div class="showcase-header">
+                        <i class="fas fa-code"></i>
+                        <h3 data-i18n="showcase.python.title">Python Scripting</h3>
+                    </div>
+                    <ul class="showcase-list">
+                        <li class="done" data-i18n="showcase.python.1">InfComponent base class with lifecycle</li>
+                        <li class="done" data-i18n="showcase.python.2">@serialized_field with Inspector UI</li>
+                        <li class="done" data-i18n="showcase.python.3">@require_component, @disallow_multiple, @execute_in_edit_mode</li>
+                        <li class="done" data-i18n="showcase.python.4">Component serialization / deserialization</li>
+                        <li class="done" data-i18n="showcase.python.5">PyComponentProxy C++↔Python bridge</li>
+                        <li class="done" data-i18n="showcase.python.6">Unity-style Input system (get_key, get_axis…)</li>
+                    </ul>
+                </div>
+
+                <!-- Editor -->
+                <div class="showcase-card">
+                    <div class="showcase-header">
+                        <i class="fas fa-tools"></i>
+                        <h3 data-i18n="showcase.editor.title">Editor (ImGui)</h3>
+                    </div>
+                    <ul class="showcase-list">
+                        <li class="done" data-i18n="showcase.editor.1">Hierarchy, Inspector, Scene View</li>
+                        <li class="done" data-i18n="showcase.editor.2">Game View, Project Browser, Console</li>
+                        <li class="done" data-i18n="showcase.editor.3">Material editor in Inspector</li>
+                        <li class="done" data-i18n="showcase.editor.4">Menu bar, Toolbar (Play/Pause/Stop)</li>
+                        <li class="done" data-i18n="showcase.editor.5">Drag & drop, windows closable/reopenable</li>
+                    </ul>
+                </div>
+
+                <!-- Resources & Launcher -->
+                <div class="showcase-card">
+                    <div class="showcase-header">
+                        <i class="fas fa-database"></i>
+                        <h3 data-i18n="showcase.resources.title">Resources & Launcher</h3>
+                    </div>
+                    <ul class="showcase-list">
+                        <li class="done" data-i18n="showcase.resources.1">AssetDatabase with GUID & .meta files</li>
+                        <li class="done" data-i18n="showcase.resources.2">Texture (stb), Mesh (Assimp), Shader loading</li>
+                        <li class="done" data-i18n="showcase.resources.3">Material system (.mat JSON files)</li>
+                        <li class="done" data-i18n="showcase.resources.4">PySide6 project launcher (MVVM)</li>
+                        <li class="done" data-i18n="showcase.resources.5">SQLite project database</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Code Examples Section -->
+    <section id="examples" class="examples">
+        <div class="container">
+            <h2 class="section-title" data-i18n="examples.title">See It in Action</h2>
+
+            <div class="example-tabs">
+                <button class="tab-btn active" onclick="showTab('tab-component')" data-i18n="examples.tab1">Component</button>
+                <button class="tab-btn" onclick="showTab('tab-renderpipeline')" data-i18n="examples.tab2">Render Pipeline</button>
+                <button class="tab-btn" onclick="showTab('tab-ai')" data-i18n="examples.tab3">AI Integration</button>
+            </div>
+
+            <div id="tab-component" class="tab-content active">
+                <div class="code-preview large">
+                    <div class="code-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="filename">rotator.py</span>
+                    </div>
+                    <pre><code><span class="keyword">from</span> InfEngine <span class="keyword">import</span> InfComponent, vec3f
+<span class="keyword">from</span> InfEngine.components <span class="keyword">import</span> serialized_field, require_component
+<span class="keyword">from</span> InfEngine.debug <span class="keyword">import</span> Debug
+
+<span class="decorator">@require_component</span>(<span class="string">"MeshRenderer"</span>)
+<span class="keyword">class</span> <span class="class-name">Rotator</span>(InfComponent):
+    <span class="string">"""Rotates the GameObject continuously."""</span>
+
+    speed: <span class="type">float</span> = serialized_field(default=<span class="number">45.0</span>, tooltip=<span class="string">"Degrees per second"</span>)
+    axis: <span class="type">str</span> = serialized_field(default=<span class="string">"y"</span>)
+
+    <span class="keyword">def</span> <span class="function">start</span>(<span class="param">self</span>):
+        Debug.log(<span class="string">f"Rotator started: </span>{<span class="param">self</span>.speed}<span class="string">°/s on </span>{<span class="param">self</span>.axis}<span class="string">"</span>)
+
+    <span class="keyword">def</span> <span class="function">update</span>(<span class="param">self</span>, delta_time: <span class="type">float</span>):
+        rot = <span class="param">self</span>.transform.euler_angles
+        delta = <span class="param">self</span>.speed * delta_time
+        <span class="keyword">if</span> <span class="param">self</span>.axis == <span class="string">"y"</span>:
+            rot.y += delta
+        <span class="keyword">elif</span> <span class="param">self</span>.axis == <span class="string">"x"</span>:
+            rot.x += delta
+        <span class="param">self</span>.transform.euler_angles = rot</code></pre>
+                </div>
+            </div>
+
+            <div id="tab-renderpipeline" class="tab-content">
+                <div class="code-preview large">
+                    <div class="code-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="filename">my_pipeline.py</span>
+                    </div>
+                    <pre><code><span class="keyword">from</span> InfEngine.rendering <span class="keyword">import</span> RenderPipeline
+<span class="keyword">from</span> InfEngine.rendergraph <span class="keyword">import</span> RenderGraph, Format
+
+<span class="keyword">class</span> <span class="class-name">MyPipeline</span>(RenderPipeline):
+    <span class="keyword">def</span> <span class="function">render</span>(<span class="param">self</span>, context, cameras):
+        <span class="keyword">for</span> camera <span class="keyword">in</span> cameras:
+            context.setup_camera_properties(camera)
+            culling = context.cull(camera)  <span class="comment"># frustum culling</span>
+
+            graph = RenderGraph(<span class="string">"ForwardPipeline"</span>)
+            color = graph.backbuffer()
+            depth = graph.create_texture(<span class="string">"Depth"</span>,
+                format=Format.D32_SFLOAT)
+
+            opaque = graph.add_pass(<span class="string">"Opaque"</span>, priority=<span class="number">0</span>)
+            opaque.write_color(color)
+            opaque.write_depth(depth)
+            opaque.set_clear(
+                color=(<span class="number">0.1</span>, <span class="number">0.1</span>, <span class="number">0.15</span>, <span class="number">1.0</span>),
+                depth=<span class="number">1.0</span>
+            )
+            opaque.draw_renderers(
+                queue_range=(<span class="number">0</span>, <span class="number">2500</span>),
+                sort_mode=<span class="string">"front_to_back"</span>
+            )
+
+            graph.set_output(color)
+            context.apply_graph(graph.build())
+            context.submit_culling(culling)</code></pre>
+                </div>
+            </div>
+
+            <div id="tab-ai" class="tab-content">
+                <div class="code-preview large">
+                    <div class="code-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="filename">ai_vision.py</span>
+                    </div>
+                    <pre><code><span class="keyword">import</span> numpy <span class="keyword">as</span> np
+<span class="keyword">import</span> torch
+<span class="keyword">from</span> InfEngine <span class="keyword">import</span> InfComponent
+
+<span class="keyword">class</span> <span class="class-name">AIVision</span>(InfComponent):
+    <span class="string">"""Feed the renderer output to a neural network."""</span>
+
+    <span class="keyword">def</span> <span class="function">start</span>(<span class="param">self</span>):
+        <span class="param">self</span>.model = torch.load(<span class="string">"model.pt"</span>)
+        <span class="param">self</span>.model.eval()
+
+    <span class="keyword">def</span> <span class="function">update</span>(<span class="param">self</span>, dt):
+        <span class="comment"># GPU → CPU readback as NumPy array</span>
+        engine = <span class="param">self</span>.get_engine()
+        pixels = engine.read_pass_color_pixels(
+            <span class="string">"MainColor"</span>
+        )  <span class="comment"># shape: (H, W, 4) uint8</span>
+
+        <span class="keyword">if</span> pixels <span class="keyword">is not</span> <span class="literal">None</span>:
+            tensor = torch.from_numpy(pixels)
+            tensor = tensor.permute(<span class="number">2</span>,<span class="number">0</span>,<span class="number">1</span>).float() / <span class="number">255.0</span>
+            prediction = <span class="param">self</span>.model(
+                tensor.unsqueeze(<span class="number">0</span>)
+            )
+            <span class="comment"># Use prediction for game logic...</span></code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Architecture Section -->
+    <section id="architecture" class="architecture">
+        <div class="container">
+            <h2 class="section-title" data-i18n="arch.title">Architecture</h2>
+            <p class="section-subtitle" data-i18n="arch.subtitle">
+                C++ handles the hot loops. Python handles the logic. pybind11 bridges both worlds.
+            </p>
+            <div class="arch-diagram">
+                <div class="arch-layer layer-python">
+                    <span class="layer-name" data-i18n="arch.layer.launcher">Launcher</span>
+                    <span class="layer-tech">PySide6 / MVVM</span>
+                </div>
+                <div class="arch-arrow">↓</div>
+                <div class="arch-layer layer-python">
+                    <span class="layer-name" data-i18n="arch.layer.python">Python Editor & Scripts</span>
+                    <span class="layer-tech">ImGui Panels, Components, RenderGraph, Post-process</span>
+                </div>
+                <div class="arch-arrow">↓</div>
+                <div class="arch-layer layer-app">
+                    <span class="layer-name" data-i18n="arch.layer.binding">pybind11 Binding Layer</span>
+                    <span class="layer-tech">11 Modules</span>
+                </div>
+                <div class="arch-arrow">↓</div>
+                <div class="arch-layer layer-core">
+                    <span class="layer-name" data-i18n="arch.layer.core">C++ Engine Core</span>
+                    <span class="layer-tech">Scene, ECS, Resources, AssetDatabase</span>
+                </div>
+                <div class="arch-arrow">↓</div>
+                <div class="arch-layer layer-render">
+                    <span class="layer-name" data-i18n="arch.layer.render">Vulkan Renderer</span>
+                    <span class="layer-tech">SRP, RenderGraph, Shadows, PostProcess</span>
+                </div>
+                <div class="arch-arrow">↓</div>
+                <div class="arch-layer layer-platform">
+                    <span class="layer-name" data-i18n="arch.layer.platform">Platform Layer</span>
+                    <span class="layer-tech">SDL3, Vulkan SDK</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tech Stack Section -->
+    <section id="techstack" class="techstack">
+        <div class="container">
+            <h2 class="section-title" data-i18n="techstack.title">Tech Stack</h2>
+            <div class="techstack-grid">
+                <div class="tech-item">
+                    <strong>Graphics</strong>
+                    <span>Vulkan</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Backend</strong>
+                    <span>C++17</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Frontend</strong>
+                    <span>Python 3.12+</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Binding</strong>
+                    <span>pybind11</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Window</strong>
+                    <span>SDL3</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Editor GUI</strong>
+                    <span>Dear ImGui</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Mesh</strong>
+                    <span>Assimp</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Math</strong>
+                    <span>GLM</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Shaders</strong>
+                    <span>glslang + SPIRV-Cross</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Images</strong>
+                    <span>stb</span>
+                </div>
+                <div class="tech-item">
+                    <strong>JSON</strong>
+                    <span>nlohmann/json</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Launcher</strong>
+                    <span>PySide6</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta">
+        <div class="container">
+            <h2 data-i18n="cta.title">Ready to Build the Future?</h2>
+            <p data-i18n="cta.desc">Infernux is open source and actively developed. Star the repo, fork it, or contribute.</p>
+            <div class="cta-buttons">
+                <a href="https://github.com/ChenlizheMe/InfEngine" class="btn btn-primary" target="_blank">
+                    <i class="fab fa-github"></i> <span data-i18n="cta.star">Star on GitHub</span>
+                </a>
+                <a href="roadmap.html" class="btn btn-secondary" data-i18n="cta.roadmap">
+                    View Roadmap
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <span class="logo-icon">🔥</span>
+                    <span class="logo-text">Infernux Engine</span>
+                    <p data-i18n="footer.tagline">The AI-Native Game Engine</p>
+                </div>
+                <div class="footer-links">
+                    <div class="footer-column">
+                        <h4 data-i18n="footer.resources">Resources</h4>
+                        <a href="roadmap.html" data-i18n="nav.roadmap">Roadmap</a>
+                        <a href="https://github.com/ChenlizheMe/InfEngine" target="_blank">GitHub</a>
+                        <a href="https://github.com/ChenlizheMe/InfEngine/blob/main/README.md" target="_blank">README</a>
+                    </div>
+                    <div class="footer-column">
+                        <h4 data-i18n="footer.community">Community</h4>
+                        <a href="https://github.com/ChenlizheMe/InfEngine/issues" target="_blank" data-i18n="footer.issues">Issues</a>
+                        <a href="https://github.com/ChenlizheMe/InfEngine/discussions" target="_blank" data-i18n="footer.discussions">Discussions</a>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>© 2024 Lizhe Chen. MIT License.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/i18n.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

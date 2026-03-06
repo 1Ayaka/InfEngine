@@ -1,0 +1,405 @@
+#pragma once
+
+#include "Component.h"
+#include "Transform.h"
+#include <memory>
+#include <string>
+#include <typeindex>
+#include <unordered_map>
+#include <vector>
+
+namespace infengine
+{
+
+// Forward declaration
+class Scene;
+
+/**
+ * @brief Base entity in the scene hierarchy.
+ *
+ * GameObjects are containers for Components. Every GameObject has a Transform
+ * component by default. GameObjects can have parent-child relationships.
+ *
+ * Usage:
+ *   auto player = std::make_unique<GameObject>("Player");
+ *   player->AddComponent<MeshRenderer>();
+ *   player->GetTransform()->SetPosition(0, 1, 0);
+ */
+class GameObject
+{
+  public:
+    explicit GameObject(const std::string &name = "GameObject");
+    ~GameObject();
+
+    // Non-copyable, movable
+    GameObject(const GameObject &) = delete;
+    GameObject &operator=(const GameObject &) = delete;
+    GameObject(GameObject &&) = default;
+    GameObject &operator=(GameObject &&) = default;
+
+    // ========================================================================
+    // Identity
+    // ========================================================================
+
+    [[nodiscard]] const std::string &GetName() const
+    {
+        return m_name;
+    }
+    void SetName(const std::string &name)
+    {
+        m_name = name;
+    }
+
+    [[nodiscard]] uint64_t GetID() const
+    {
+        return m_id;
+    }
+
+    // ========================================================================
+    // Tag & Layer
+    // ========================================================================
+
+    [[nodiscard]] const std::string &GetTag() const
+    {
+        return m_tag;
+    }
+    void SetTag(const std::string &tag)
+    {
+        m_tag = tag;
+    }
+    [[nodiscard]] bool CompareTag(const std::string &tag) const
+    {
+        return m_tag == tag;
+    }
+
+    [[nodiscard]] int GetLayer() const
+    {
+        return m_layer;
+    }
+    void SetLayer(int layer);
+
+    // ========================================================================
+    // Activation (Unity: activeSelf / activeInHierarchy)
+    // ========================================================================
+
+    /// @brief Get local active state. Unity: gameObject.activeSelf
+    [[nodiscard]] bool IsActive() const
+    {
+        return m_active;
+    }
+
+    /// @brief Alias for IsActive(). Unity naming: activeSelf
+    [[nodiscard]] bool GetActiveSelf() const
+    {
+        return m_active;
+    }
+
+    void SetActive(bool active);
+
+    /// @brief Check if this object and all parents are active. Unity: gameObject.activeInHierarchy
+    [[nodiscard]] bool IsActiveInHierarchy() const;
+
+    // ========================================================================
+    // Static flag (Unity: gameObject.isStatic)
+    // ========================================================================
+
+    [[nodiscard]] bool IsStatic() const
+    {
+        return m_isStatic;
+    }
+    void SetStatic(bool isStatic)
+    {
+        m_isStatic = isStatic;
+    }
+
+    // ========================================================================
+    // Transform (always available)
+    // ========================================================================
+
+    [[nodiscard]] Transform *GetTransform()
+    {
+        return &m_transform;
+    }
+    [[nodiscard]] const Transform *GetTransform() const
+    {
+        return &m_transform;
+    }
+
+    // ========================================================================
+    // Component management
+    // ========================================================================
+
+    /// @brief Add a component of type T
+    template <typename T, typename... Args> T *AddComponent(Args &&...args)
+    {
+        static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
+        static_assert(!std::is_same_v<Transform, T>, "Cannot add Transform component manually");
+
+        auto component = std::make_unique<T>(std::forward<Args>(args)...);
+        T *ptr = component.get();
+        ptr->SetGameObject(this);
+
+        m_components.push_back(std::move(component));
+        PostAddComponent(ptr);
+        return ptr;
+    }
+
+    /// @brief Get the first component of type T
+    template <typename T> [[nodiscard]] T *GetComponent() const
+    {
+        static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
+
+        // Special case for Transform
+        if constexpr (std::is_same_v<Transform, T>) {
+            return const_cast<Transform *>(&m_transform);
+        }
+
+        for (const auto &comp : m_components) {
+            if (T *casted = dynamic_cast<T *>(comp.get())) {
+                return casted;
+            }
+        }
+        return nullptr;
+    }
+
+    /// @brief Get all components of type T
+    template <typename T> [[nodiscard]] std::vector<T *> GetComponents() const
+    {
+        static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
+
+        std::vector<T *> result;
+        for (const auto &comp : m_components) {
+            if (T *casted = dynamic_cast<T *>(comp.get())) {
+                result.push_back(casted);
+            }
+        }
+        return result;
+    }
+
+    /// @brief Check if the GameObject has a component of type T
+    template <typename T> [[nodiscard]] bool HasComponent() const
+    {
+        return GetComponent<T>() != nullptr;
+    }
+
+    /// @brief Get a component of type T on this or any child GameObject. Unity: GetComponentInChildren<T>()
+    template <typename T> [[nodiscard]] T *GetComponentInChildren() const
+    {
+        static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
+        // Check self first
+        T *comp = GetComponent<T>();
+        if (comp)
+            return comp;
+        // Search children recursively
+        for (const auto &child : m_children) {
+            comp = child->GetComponentInChildren<T>();
+            if (comp)
+                return comp;
+        }
+        return nullptr;
+    }
+
+    /// @brief Get a component of type T on this or any parent GameObject. Unity: GetComponentInParent<T>()
+    template <typename T> [[nodiscard]] T *GetComponentInParent() const
+    {
+        static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
+        // Check self first
+        T *comp = GetComponent<T>();
+        if (comp)
+            return comp;
+        // Walk up the hierarchy
+        if (m_parent)
+            return m_parent->GetComponentInParent<T>();
+        return nullptr;
+    }
+
+    /// @brief Get all components of type T on this and all child GameObjects. Unity: GetComponentsInChildren<T>()
+    template <typename T> [[nodiscard]] std::vector<T *> GetComponentsInChildren() const
+    {
+        static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
+        std::vector<T *> result;
+        // Check self
+        for (const auto &comp : m_components) {
+            if (T *casted = dynamic_cast<T *>(comp.get())) {
+                result.push_back(casted);
+            }
+        }
+        // Search children recursively
+        for (const auto &child : m_children) {
+            auto childComps = child->GetComponentsInChildren<T>();
+            result.insert(result.end(), childComps.begin(), childComps.end());
+        }
+        return result;
+    }
+
+    /// @brief Get all components of type T on this and all parent GameObjects. Unity: GetComponentsInParent<T>()
+    template <typename T> [[nodiscard]] std::vector<T *> GetComponentsInParent() const
+    {
+        static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
+        std::vector<T *> result;
+        // Check self
+        for (const auto &comp : m_components) {
+            if (T *casted = dynamic_cast<T *>(comp.get())) {
+                result.push_back(casted);
+            }
+        }
+        // Walk up the hierarchy
+        if (m_parent) {
+            auto parentComps = m_parent->GetComponentsInParent<T>();
+            result.insert(result.end(), parentComps.begin(), parentComps.end());
+        }
+        return result;
+    }
+
+    /// @brief Remove the first component of type T
+    template <typename T> bool RemoveComponent()
+    {
+        static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
+        static_assert(!std::is_same_v<Transform, T>, "Cannot remove Transform component");
+
+        for (auto it = m_components.begin(); it != m_components.end(); ++it) {
+            if (dynamic_cast<T *>(it->get())) {
+                if (!CanRemoveComponent(it->get()))
+                    return false;
+                (*it)->CallOnDestroy();
+                m_components.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// @brief Get all components
+    [[nodiscard]] const std::vector<std::unique_ptr<Component>> &GetAllComponents() const
+    {
+        return m_components;
+    }
+
+    /// @brief Get components sorted by execution order (ascending), then by stable component ID.
+    [[nodiscard]] std::vector<Component *> GetComponentsInExecutionOrder() const;
+
+    /// @brief Add a pre-created component (used for PyComponentProxy)
+    Component *AddExistingComponent(std::unique_ptr<Component> component);
+
+    /// @brief Add a component by registered type name
+    Component *AddComponentByTypeName(const std::string &typeName);
+
+    /// @brief Remove a component instance by pointer
+    bool RemoveComponent(Component *component);
+
+    /// @brief Check whether a component can be removed (not blocked by RequireComponent).
+    ///
+    /// Returns false when another sibling component declares a requirement (via
+    /// GetRequiredComponentTypes) that only `component` satisfies.
+    [[nodiscard]] bool CanRemoveComponent(Component *component) const;
+
+    /// @brief Get the sibling component type names that block removing `component`.
+    ///
+    /// If empty, removal is allowed. Each returned entry is a sibling component
+    /// whose RequireComponent contract would be violated by removing `component`.
+    [[nodiscard]] std::vector<std::string> GetRemovalBlockingComponentTypes(Component *component) const;
+
+    // ========================================================================
+    // Hierarchy
+    // ========================================================================
+
+    [[nodiscard]] GameObject *GetParent() const
+    {
+        return m_parent;
+    }
+
+    // Return reference to unique_ptrs?
+    // No, for compatibility and ease of use in C++, providing raw pointers is often better if ownership is internal.
+    // However, for strict C++17 RAII, we expose the structure.
+    // To minimize breakage, we can return a constructed vector of pointers, or change the API to return the unique_ptrs
+    // const ref. Let's go with const ref to storage for performance.
+    [[nodiscard]] const std::vector<std::unique_ptr<GameObject>> &GetChildren() const
+    {
+        return m_children;
+    }
+
+    [[nodiscard]] size_t GetChildCount() const
+    {
+        return m_children.size();
+    }
+    [[nodiscard]] GameObject *GetChild(size_t index) const;
+
+    /// @brief Set parent (nullptr for root). worldPositionStays preserves world transform.
+    void SetParent(GameObject *parent, bool worldPositionStays = true);
+
+    /// @brief Internal: Attach a child (takes ownership)
+    void AttachChild(std::unique_ptr<GameObject> child);
+
+    /// @brief Reorder a child to a new sibling index
+    void SetChildSiblingIndex(GameObject *child, int newIndex);
+
+    /// @brief Internal: Detach a child (returns ownership)
+    std::unique_ptr<GameObject> DetachChild(GameObject *child);
+
+    /// @brief Find a child by name (non-recursive)
+    [[nodiscard]] GameObject *FindChild(const std::string &name) const;
+
+    /// @brief Find a descendant by name (recursive)
+    [[nodiscard]] GameObject *FindDescendant(const std::string &name) const;
+
+    // ========================================================================
+    // Scene
+    // ========================================================================
+
+    [[nodiscard]] Scene *GetScene() const
+    {
+        return m_scene;
+    }
+
+    // ========================================================================
+    // Lifecycle (called by Scene)
+    // ========================================================================
+
+    void Update(float deltaTime);
+    void FixedUpdate(float fixedDeltaTime);
+    void LateUpdate(float deltaTime);
+    void EditorUpdate(float deltaTime);
+
+    // ========================================================================
+    // Serialization
+    // ========================================================================
+
+    /// @brief Serialize GameObject and all components to JSON string
+    [[nodiscard]] std::string Serialize() const;
+
+    /// @brief Deserialize GameObject from JSON string
+    bool Deserialize(const std::string &jsonStr);
+
+    /// @brief Ensure ID generator is ahead of a given ID (for deserialization)
+    static void EnsureNextID(uint64_t id);
+
+  private:
+    friend class Scene;
+    friend class SceneManager;
+
+    void SetScene(Scene *scene);
+
+    void PostAddComponent(Component *component);
+    void HandleActiveStateChanged(bool wasActiveInHierarchy, bool isActiveInHierarchy);
+
+    void CollectAllDescendants(std::vector<GameObject *> &out) const;
+
+    static uint64_t GenerateID();
+
+    std::string m_name;
+    uint64_t m_id;
+    bool m_active = true;
+    bool m_isStatic = false;
+    std::string m_tag = "Untagged";
+    int m_layer = 0; // Default layer
+
+    Transform m_transform;
+    std::vector<std::unique_ptr<Component>> m_components;
+
+    GameObject *m_parent = nullptr;
+    std::vector<std::unique_ptr<GameObject>> m_children;
+
+    Scene *m_scene = nullptr;
+};
+
+} // namespace infengine

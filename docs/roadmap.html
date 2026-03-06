@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roadmap – Infernux Engine</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/roadmap.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">
+                <span class="logo-icon">🔥</span>
+                <span class="logo-text">Infernux</span>
+            </a>
+            <div class="nav-links">
+                <a href="index.html" data-i18n="nav.home">Home</a>
+                <a href="index.html#features" data-i18n="nav.features">Features</a>
+                <a href="index.html#showcase" data-i18n="nav.showcase">Showcase</a>
+                <a href="roadmap.html" class="active" data-i18n="nav.roadmap">Roadmap</a>
+                <a href="wiki/site/en/index.html" data-i18n="nav.wiki">Wiki</a>
+                <a href="wiki/site/en/api/index.html" data-i18n="nav.api">API Reference</a>
+                <a href="https://github.com/ChenlizheMe/InfEngine" target="_blank">
+                    <i class="fab fa-github"></i> GitHub
+                </a>
+            </div>
+            <div class="nav-right">
+                <button class="lang-toggle" onclick="toggleLanguage()">
+                    <span id="lang-text">中文</span>
+                </button>
+                <button class="mobile-menu-btn" onclick="toggleMobileMenu()">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Page Header -->
+    <div class="rm-header">
+        <h1 data-i18n="roadmap.title">Development Roadmap</h1>
+        <p data-i18n="roadmap.subtitle">Track our progress building the AI-native game engine</p>
+    </div>
+
+    <!-- Timeline Wrapper -->
+    <div class="roadmap-page">
+        <!-- Legend -->
+        <div class="rm-legend-container">
+            <div class="rm-legend-item">
+                <div class="rm-status-dot done"></div>
+                <span data-i18n="roadmap.status.completed">Completed</span>
+            </div>
+            <div class="rm-legend-item">
+                <div class="rm-status-dot partial"></div>
+                <span data-i18n="roadmap.status.inProgress">In Progress</span>
+            </div>
+            <div class="rm-legend-item">
+                <div class="rm-status-dot planned"></div>
+                <span data-i18n="roadmap.status.planned">Planned</span>
+            </div>
+        </div>
+
+        <!-- Timeline container -->
+        <div class="rm-timeline" id="roadmap-timeline">
+            <!-- dynamically generated -->
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <span class="logo-icon">🔥</span>
+                    <span class="logo-text">Infernux Engine</span>
+                    <p data-i18n="footer.tagline">The AI-Native Game Engine</p>
+                </div>
+                <div class="footer-links">
+                    <div class="footer-column">
+                        <h4 data-i18n="footer.resources">Resources</h4>
+                        <a href="roadmap.html" data-i18n="nav.roadmap">Roadmap</a>
+                        <a href="https://github.com/ChenlizheMe/InfEngine" target="_blank">GitHub</a>
+                    </div>
+                    <div class="footer-column">
+                        <h4 data-i18n="footer.community">Community</h4>
+                        <a href="https://github.com/ChenlizheMe/InfEngine/issues" target="_blank" data-i18n="footer.issues">Issues</a>
+                        <a href="https://github.com/ChenlizheMe/InfEngine/discussions" target="_blank" data-i18n="footer.discussions">Discussions</a>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&#169; 2024 Lizhe Chen. MIT License.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/i18n.js"></script>
+    <script src="js/main.js"></script>
+    <script src="js/roadmap.js"></script>
+</body>
+</html>

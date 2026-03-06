@@ -1,0 +1,325 @@
+"""
+GizmosCollector — per-frame scene walk that invokes gizmo callbacks and uploads.
+
+Called once per frame (before ``SubmitCulling()``) to:
+1. Reset Gizmos per-frame state.
+2. [OPTIMISED] Iterate Python components via ``InfComponent._active_instances``
+   (populated by ``_set_game_object()``); zero pybind11 calls when no Python
+   components exist in the scene.
+3. [OPTIMISED] For built-in C++ components that define gizmo methods or icons,
+   use a per-type cached GO list rebuilt lazily after scene changes.
+
+OLD behaviour (kept for reference):
+2. Walk all GameObjects in the active scene.
+3. For every Python component on each GO:
+   a. If the component's ``always_show`` is True → call ``on_draw_gizmos()``.
+   b. If the GO (or an ancestor) is the selected object → call both
+      ``on_draw_gizmos()`` (if not already called) and ``on_draw_gizmos_selected()``.
+4. For built-in C++ components that define ``on_draw_gizmos()`` in their
+   BuiltinComponent wrapper (Camera, etc.), create a temporary wrapper
+   and invoke the same gizmo lifecycle as Python components.
+5. Pack accumulated geometry and upload to C++ via ``engine.upload_component_gizmos()``.
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List, TYPE_CHECKING
+
+from InfEngine.gizmos.gizmos import Gizmos
+from InfEngine.components.serialized_field import SerializedFieldDescriptor
+
+if TYPE_CHECKING:
+    from InfEngine.engine.engine import Engine
+
+
+# ---------------------------------------------------------------------------
+# Module-level scene-change notification flag
+#
+# Call ``notify_scene_changed()`` from play_mode.py / scene_manager.py when
+# objects are added or removed from the scene.  The next collect() call will
+# rebuild the per-type icon cache.
+# ---------------------------------------------------------------------------
+_scene_dirty: bool = True   # start dirty so the cache is populated on first frame
+
+
+def notify_scene_changed() -> None:
+    """Signal that the scene has changed; next frame rebuilds the icon cache."""
+    global _scene_dirty
+    _scene_dirty = True
+
+
+class GizmosCollector:
+    """Stateful per-frame collector.
+
+    Keep a single long-lived instance per Engine; call ``invalidate_cache()``
+    whenever objects are added/removed (scene reload, play-mode transitions).
+
+    Performance characteristics for a scene with N purely-C++ objects and K
+    Python-component objects:
+      * Pass 1: O(K) — zero pybind11 calls when K=0
+      * Pass 2: O(icon_instances) per frame after cache warm-up; O(N) once on
+        cache miss (per icon type, e.g. first frame or after scene change)
+
+    Usage::
+
+        collector = GizmosCollector()
+        # on scene change / play-mode exit:
+        collector.invalidate_cache()
+        # each frame:
+        collector.collect_and_upload(engine)
+    """
+
+    def __init__(self):
+        # per-type GO cache: type_name -> list of live GO pybind11 objects
+        # that carry that component.  Rebuilt lazily when _cache_built doesn't
+        # contain the type_name.
+        self._icon_cache: Dict[str, list] = {}
+        self._cache_built: set = set()   # type_names whose cache entry is filled
+        self._last_structure_version: int = -1  # track Scene.structure_version
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def invalidate_cache(self) -> None:
+        """Invalidate the GO-to-type cache (call on scene change / play mode exit)."""
+        self._icon_cache.clear()
+        self._cache_built.clear()
+
+    def collect_and_upload(self, engine: 'Engine') -> None:
+        """Walk the scene, invoke callbacks, upload geometry to C++."""
+        global _scene_dirty
+
+        from InfEngine.lib import SceneManager as _SM
+        from InfEngine.components.builtin_component import BuiltinComponent
+        from InfEngine.components.component import InfComponent
+
+        native = engine.get_native_engine()
+        if native is None:
+            return
+
+        scene = _SM.instance().get_active_scene()
+        if scene is None:
+            if native:
+                native.clear_component_gizmos()
+            return
+
+        # Use the C++ structure_version counter to detect scene mutations cheaply.
+        # Falls back to the manual _scene_dirty flag when the binding is unavailable.
+        ver = scene.structure_version
+        if ver is not None:
+            if ver != self._last_structure_version:
+                self.invalidate_cache()
+                self._last_structure_version = ver
+                _scene_dirty = False
+        elif _scene_dirty:
+            self.invalidate_cache()
+            _scene_dirty = False
+
+        selected_id: int = engine.get_selected_object_id()
+
+        # Build set of descendant IDs for the selected object (including itself)
+        selected_ancestors: set = set()
+        if selected_id:
+            selected_ancestors = self._build_ancestor_set(scene, selected_id)
+
+        # Snapshot the builtin registry once per frame
+        builtin_registry = BuiltinComponent._builtin_registry
+
+        # Begin frame: clear Gizmos accumulation buffers
+        Gizmos._begin_frame()
+
+        # ====================================================================
+        # Pass 1: Python component gizmos
+        #
+        # ``InfComponent._active_instances`` is a {go_id: [InfComponent, ...]}
+        # dict populated by ``_set_game_object()`` — no pybind11 calls needed
+        # to discover which objects have Python components.
+        # For a scene with zero Python components this pass costs nothing.
+        # ====================================================================
+        active = InfComponent._active_instances
+        if active:
+            # Snapshot to avoid issues if the dict mutates during iteration
+            for go_id, components in list(active.items()):
+                is_selected = go_id in selected_ancestors
+                for comp in components:
+                    if isinstance(comp, BuiltinComponent):
+                        continue
+                    if not getattr(comp, 'enabled', True):
+                        continue
+
+                    always_show = getattr(comp, 'always_show', True)
+                    should_draw = always_show or is_selected
+                    if should_draw:
+                        comp._call_on_draw_gizmos()
+
+                    if is_selected:
+                        comp._call_on_draw_gizmos_selected()
+
+        # ====================================================================
+        # Pass 2: Built-in C++ component gizmos (Camera, Light, BoxCollider…)
+        #
+        # Optimisations applied:
+        #   a) Skip types that have neither icon colour nor custom gizmo methods
+        #      (e.g. Rigidbody, MeshRenderer) — they contribute nothing.
+        #   b) Skip selection-only types (always_show=False, no icon) when
+        #      nothing is selected; only visit selected descendants for these.
+        #   c) For icon types (Camera, Light): use _get_icon_instances() which
+        #      builds a per-type GO list once and reuses it every subsequent
+        #      frame (~O(1) after first build, O(N) on cache miss).
+        # ====================================================================
+        for type_name, wrapper_cls in builtin_registry.items():
+
+            # --- a) Pre-filter: does this type contribute anything visible? ---
+            icon_color = self._resolve_class_value(wrapper_cls, 'gizmo_icon_color', None)
+            has_gizmos = (
+                wrapper_cls.on_draw_gizmos is not InfComponent.on_draw_gizmos
+                or wrapper_cls.on_draw_gizmos_selected is not InfComponent.on_draw_gizmos_selected
+            )
+            if icon_color is None and not has_gizmos:
+                continue  # Nothing to draw (Rigidbody, MeshRenderer, …)
+
+            always_show_cls = bool(self._resolve_class_value(wrapper_cls, 'always_show', True))
+
+            # --- b) Skip selection-only types when nothing is selected ---
+            if icon_color is None and not always_show_cls and not selected_ancestors:
+                continue  # Colliders etc. — nothing to show, nothing selected
+
+            # --- c) Determine which GOs to iterate ---
+            if icon_color is not None:
+                # Icon types: use the per-type GO cache (O(1) after first frame)
+                matching = self._get_icon_instances(scene, type_name)
+            elif not always_show_cls and selected_ancestors:
+                # Selection-only gizmos: only visit selected + descendant objects
+                matching = [
+                    scene.find_by_id(gid)
+                    for gid in selected_ancestors if gid
+                ]
+                matching = [go for go in matching if go is not None]
+            else:
+                # Fallback: need full object list (always_show=True with gizmos)
+                matching = scene.get_all_objects()
+
+            for go in matching:
+                try:
+                    go_id = go.id
+                    is_selected = go_id in selected_ancestors
+                    cpp_comp = go.get_cpp_component(type_name)
+                except Exception:
+                    continue
+                if cpp_comp is None:
+                    continue
+
+                try:
+                    enabled = cpp_comp.enabled
+                except Exception:
+                    continue
+                if not enabled:
+                    continue
+
+                # ---- Icon registration (always, regardless of selection) ----
+                if icon_color is not None:
+                    transform = go.get_transform()
+                    if transform is not None:
+                        pos = transform.position
+                        Gizmos.draw_icon(
+                            (pos.x, pos.y, pos.z), go_id, icon_color)
+
+                # ---- Gizmo lifecycle ----
+                if not has_gizmos:
+                    continue
+
+                try:
+                    wrapper = wrapper_cls._get_or_create_wrapper(cpp_comp, go)
+                except Exception:
+                    continue
+                if wrapper is None:
+                    continue
+
+                try:
+                    always_show_inst = getattr(wrapper, 'always_show', True)
+                    should_draw = always_show_inst or is_selected
+                    if should_draw:
+                        wrapper._call_on_draw_gizmos()
+
+                    if is_selected:
+                        wrapper._call_on_draw_gizmos_selected()
+                except Exception:
+                    try:
+                        wrapper._invalidate_native_binding()
+                    except Exception:
+                        pass
+
+        # ---- Pack and upload line gizmo data ----
+        packed = Gizmos._get_packed_data()
+        if packed is not None:
+            vert_buf, vert_count, idx_buf, desc_buf, desc_count = packed
+            native.upload_component_gizmos(
+                vert_buf, vert_count, idx_buf, desc_buf, desc_count)
+        else:
+            native.clear_component_gizmos()
+
+        # ---- Pack and upload icon data ----
+        icon_packed = Gizmos._get_packed_icon_data()
+        if icon_packed is not None:
+            pos_color_buf, id_buf, icon_count = icon_packed
+            native.upload_component_gizmo_icons(
+                pos_color_buf, id_buf, icon_count)
+        else:
+            native.clear_component_gizmo_icons()
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _get_icon_instances(self, scene, type_name: str) -> list:
+        """Return the cached list of GOs that carry *type_name*.
+
+        On the first call for a given type (or after ``invalidate_cache()``),
+        walks all scene objects once to find matching GOs.  Subsequent calls
+        return the cached list in O(1).
+        """
+        if type_name in self._cache_built:
+            return self._icon_cache.get(type_name, [])
+
+        # Build this type's cache entry via a one-time scene walk
+        result: List = []
+        all_objs = scene.get_all_objects()
+        for go in all_objs:
+            if go.get_cpp_component(type_name) is not None:
+                result.append(go)
+
+        self._icon_cache[type_name] = result
+        self._cache_built.add(type_name)
+        return result
+
+    @staticmethod
+    def _build_ancestor_set(scene, selected_id: int) -> set:
+        """Build a set containing the selected object ID and all its descendant IDs."""
+        result = set()
+        if not selected_id:
+            return result
+
+        selected_go = scene.find_by_id(selected_id)
+        if selected_go is None:
+            result.add(selected_id)
+            return result
+
+        # Iterative DFS to collect selected GO + all descendants
+        stack = [selected_go]
+        while stack:
+            go = stack.pop()
+            gid = go.id
+            result.add(gid)
+            children = go.get_children()
+            if children:
+                stack.extend(children)
+
+        return result
+
+    @staticmethod
+    def _resolve_class_value(cls_obj, name: str, default):
+        value = getattr(cls_obj, name, default)
+        if isinstance(value, SerializedFieldDescriptor):
+            return value.metadata.default
+        return value

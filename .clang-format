@@ -1,0 +1,15 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass:      true
+  AfterStruct:     true
+  AfterEnum:       true
+  AfterNamespace:  true
+  AfterFunction:   true
+  BeforeCatch:     false
+  BeforeElse:      false
+  IndentBraces:    false
+
+AllowShortFunctionsOnASingleLine: None
+ColumnLimit: 120

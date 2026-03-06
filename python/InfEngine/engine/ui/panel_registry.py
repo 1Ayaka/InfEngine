@@ -1,0 +1,171 @@
+"""
+PanelRegistry — decorator-based panel registration system.
+
+Provides the ``@editor_panel`` decorator that auto-registers panel classes
+with the :class:`WindowManager` at startup, eliminating the need to
+manually edit ``release_engine()`` for every new panel.
+
+Usage::
+
+    from InfEngine.engine.ui import EditorPanel, editor_panel
+
+    @editor_panel("My Panel", menu_path="Window/Custom")
+    class MyPanel(EditorPanel):
+        def on_render_content(self, ctx):
+            ctx.text("Hello!")
+
+At startup, ``PanelRegistry.apply_all(window_manager)`` registers every
+decorated class with the :class:`WindowManager` so it appears in the
+Window menu and can be opened/closed.
+"""
+
+from __future__ import annotations
+
+from typing import Callable, Dict, List, Optional, Type, TYPE_CHECKING
+
+from InfEngine.debug import Debug
+
+if TYPE_CHECKING:
+    from InfEngine.lib import InfGUIRenderable
+    from .window_manager import WindowManager
+
+
+class _PanelRegistration:
+    """Internal data-class for a pending panel registration."""
+
+    __slots__ = (
+        "panel_class",
+        "type_id",
+        "display_name",
+        "menu_path",
+        "factory",
+        "singleton",
+    )
+
+    def __init__(
+        self,
+        panel_class: Type,
+        type_id: str,
+        display_name: str,
+        menu_path: str,
+        factory: Optional[Callable],
+        singleton: bool,
+    ):
+        self.panel_class = panel_class
+        self.type_id = type_id
+        self.display_name = display_name
+        self.menu_path = menu_path
+        self.factory = factory
+        self.singleton = singleton
+
+
+class PanelRegistry:
+    """Central registry of ``@editor_panel``-decorated classes.
+
+    **Not instantiated** — all state is class-level.  Call
+    :meth:`apply_all` once during engine startup to flush pending
+    registrations into the :class:`WindowManager`.
+    """
+
+    _registrations: List[_PanelRegistration] = []
+
+    # ------------------------------------------------------------------
+    # API called by the decorator
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _register(cls, reg: _PanelRegistration) -> None:
+        cls._registrations.append(reg)
+
+    # ------------------------------------------------------------------
+    # API called by release_engine()
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def apply_all(cls, window_manager: WindowManager) -> int:
+        """Register all pending panel classes with *window_manager*.
+
+        Returns the number of panels registered.
+        """
+        count = 0
+        for reg in cls._registrations:
+            window_manager.register_window_type(
+                type_id=reg.type_id,
+                window_class=reg.panel_class,
+                display_name=reg.display_name,
+                factory=reg.factory,
+                singleton=reg.singleton,
+            )
+            count += 1
+            Debug.log_internal(
+                f"[PanelRegistry] Registered: {reg.display_name} ({reg.type_id})"
+            )
+        return count
+
+    @classmethod
+    def get_registrations(cls) -> List[_PanelRegistration]:
+        """Return a copy of the registration list (for introspection)."""
+        return list(cls._registrations)
+
+    @classmethod
+    def clear(cls) -> None:
+        """Clear all registrations (for testing)."""
+        cls._registrations.clear()
+
+
+# ======================================================================
+# Public decorator
+# ======================================================================
+
+
+def editor_panel(
+    display_name: str,
+    *,
+    type_id: Optional[str] = None,
+    menu_path: str = "Window",
+    factory: Optional[Callable] = None,
+    singleton: bool = True,
+):
+    """Decorator to register a panel class with the editor.
+
+    Args:
+        display_name: Display name shown in the Window menu
+            (e.g. ``"My Debug Panel"``).
+        type_id: Unique identifier.  Defaults to the class name in
+            lower_case (e.g. ``MyDebugPanel`` → ``mydebugpanel``).
+        menu_path: Menu path for grouping (default ``"Window"``).
+            Future use — currently all panels appear under Window.
+        factory: Optional callable that returns a new panel instance.
+            Defaults to ``panel_class()``.
+        singleton: If *True* (default) only one instance is allowed.
+
+    Example::
+
+        @editor_panel("My Panel")
+        class MyPanel(EditorPanel):
+            def on_render_content(self, ctx):
+                ctx.text("Hello!")
+    """
+
+    def decorator(cls: Type) -> Type:
+        tid = type_id or cls.__name__.lower()
+
+        # Stamp class-level metadata (so WindowManager can read them)
+        cls.WINDOW_TYPE_ID = tid
+        cls.WINDOW_DISPLAY_NAME = display_name
+        cls._panel_menu_path = menu_path
+        cls._panel_singleton = singleton
+
+        PanelRegistry._register(
+            _PanelRegistration(
+                panel_class=cls,
+                type_id=tid,
+                display_name=display_name,
+                menu_path=menu_path,
+                factory=factory,
+                singleton=singleton,
+            )
+        )
+        return cls
+
+    return decorator

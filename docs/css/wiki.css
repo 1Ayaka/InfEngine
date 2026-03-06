@@ -1,0 +1,476 @@
+/* ============================================
+   Wiki Page Styles
+   ============================================ */
+
+.wiki-layout {
+    display: flex;
+    min-height: calc(100vh - var(--nav-height));
+    padding-top: var(--nav-height);
+}
+
+/* Sidebar */
+.wiki-sidebar {
+    width: 260px;
+    padding: 32px 24px;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+    position: sticky;
+    top: var(--nav-height);
+    height: calc(100vh - var(--nav-height));
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.sidebar-section {
+    margin-bottom: 32px;
+}
+
+.sidebar-section h3 {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+
+.sidebar-section ul {
+    list-style: none;
+}
+
+.sidebar-section li {
+    margin-bottom: 4px;
+}
+
+.sidebar-section a {
+    display: block;
+    padding: 8px 12px;
+    color: var(--text-secondary);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    transition: var(--transition-fast);
+}
+
+.sidebar-section a:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+.sidebar-section a.active {
+    background: rgba(255, 107, 53, 0.1);
+    color: var(--primary);
+    font-weight: 500;
+}
+
+/* Main Content */
+.wiki-content {
+    flex: 1;
+    padding: 48px 60px;
+    max-width: 900px;
+}
+
+/* Articles */
+.wiki-article {
+    margin-bottom: 80px;
+    padding-bottom: 60px;
+    border-bottom: 1px solid var(--border);
+}
+
+.wiki-article:last-child {
+    border-bottom: none;
+}
+
+.wiki-article h1 {
+    font-size: 2rem;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid var(--primary);
+}
+
+.wiki-article h2 {
+    font-size: 1.4rem;
+    margin-top: 40px;
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+.wiki-article p {
+    margin-bottom: 16px;
+    color: var(--text-secondary);
+    line-height: 1.8;
+}
+
+.wiki-article p.lead {
+    font-size: 1.1rem;
+    color: var(--text-primary);
+}
+
+.wiki-article ul, .wiki-article ol {
+    margin-bottom: 20px;
+    padding-left: 24px;
+}
+
+.wiki-article li {
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+}
+
+/* Code Blocks in Wiki */
+.wiki-article .code-block {
+    margin: 20px 0;
+}
+
+.wiki-article .code-block pre {
+    margin: 0;
+    line-height: 1.7;
+}
+
+/* Info/Warning/Reference Boxes */
+.info-box, .warning-box, .reference-box {
+    display: flex;
+    gap: 16px;
+    padding: 20px;
+    border-radius: 12px;
+    margin: 24px 0;
+}
+
+.info-box {
+    background: rgba(78, 205, 196, 0.1);
+    border: 1px solid rgba(78, 205, 196, 0.3);
+}
+
+.info-box i {
+    color: var(--secondary);
+    font-size: 1.25rem;
+    margin-top: 2px;
+}
+
+.warning-box {
+    background: rgba(255, 230, 109, 0.1);
+    border: 1px solid rgba(255, 230, 109, 0.3);
+}
+
+.warning-box i {
+    color: var(--accent);
+    font-size: 1.25rem;
+    margin-top: 2px;
+}
+
+.reference-box {
+    background: rgba(255, 107, 53, 0.1);
+    border: 1px solid rgba(255, 107, 53, 0.3);
+}
+
+.reference-box i {
+    color: var(--primary);
+    font-size: 1.25rem;
+    margin-top: 2px;
+}
+
+.info-box h4, .warning-box h4, .reference-box h4 {
+    font-size: 1rem;
+    margin-bottom: 8px;
+}
+
+.info-box p, .warning-box p, .reference-box p {
+    margin: 0;
+    font-size: 0.95rem;
+}
+
+.info-box ul, .warning-box ul, .reference-box ul {
+    margin: 8px 0 0 0;
+    padding-left: 20px;
+}
+
+.info-box li, .warning-box li, .reference-box li {
+    font-size: 0.95rem;
+    margin-bottom: 4px;
+}
+
+.reference-box a {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.reference-box a:hover {
+    text-decoration: underline;
+}
+
+/* Feature List */
+.feature-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin: 24px 0;
+}
+
+.feature-item {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.feature-icon {
+    font-size: 1.5rem;
+}
+
+.feature-item strong {
+    display: block;
+    margin-bottom: 4px;
+}
+
+.feature-item p {
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+/* Requirements List */
+.requirements-list {
+    list-style: none;
+    padding: 0;
+    margin: 20px 0;
+}
+
+.requirements-list li {
+    padding: 12px 16px;
+    background: var(--bg-card);
+    border-left: 3px solid var(--primary);
+    margin-bottom: 8px;
+}
+
+/* Tables */
+.component-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+}
+
+.component-table th, .component-table td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.component-table th {
+    background: var(--bg-elevated);
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.component-table td {
+    color: var(--text-secondary);
+}
+
+.component-table code {
+    background: var(--bg-elevated);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--primary);
+}
+
+/* Lifecycle Diagram */
+.lifecycle-diagram {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 24px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin: 24px 0;
+    overflow-x: auto;
+}
+
+.lifecycle-step {
+    padding: 16px 20px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-align: center;
+    min-width: 120px;
+}
+
+.lifecycle-step.highlight {
+    background: rgba(255, 107, 53, 0.1);
+    border-color: var(--primary);
+}
+
+.step-name {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.step-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.lifecycle-arrow {
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    flex-shrink: 0;
+}
+
+/* Architecture Layers */
+.arch-layers {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 24px 0;
+}
+
+.arch-layers .arch-layer {
+    padding: 20px 24px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+}
+
+.arch-layers .arch-layer h3 {
+    font-size: 1rem;
+    margin-bottom: 8px;
+}
+
+.arch-layers .arch-layer p {
+    margin: 0 0 8px 0;
+    font-size: 0.9rem;
+}
+
+.arch-layers .arch-layer code {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.arch-layers .python { background: rgba(78, 205, 196, 0.08); border-left: 3px solid var(--secondary); }
+.arch-layers .binding { background: rgba(255, 230, 109, 0.08); border-left: 3px solid var(--accent); }
+.arch-layers .core { background: rgba(255, 107, 53, 0.08); border-left: 3px solid var(--primary); }
+.arch-layers .render { background: rgba(225, 78, 202, 0.08); border-left: 3px solid #e14eca; }
+.arch-layers .platform { background: rgba(100, 130, 255, 0.08); border-left: 3px solid #6482ff; }
+
+/* Wiki Footer */
+.wiki-footer {
+    margin-left: 260px;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .wiki-sidebar {
+        width: 220px;
+    }
+    
+    .wiki-content {
+        padding: 32px 40px;
+    }
+    
+    .wiki-footer {
+        margin-left: 220px;
+    }
+}
+
+@media (max-width: 768px) {
+    .wiki-layout {
+        flex-direction: column;
+    }
+    
+    .wiki-sidebar {
+        width: 100%;
+        position: relative;
+        top: 0;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 24px;
+        padding: 20px;
+    }
+    
+    .sidebar-section {
+        margin-bottom: 0;
+    }
+    
+    .wiki-content {
+        padding: 24px;
+    }
+    
+    .wiki-footer {
+        margin-left: 0;
+    }
+    
+    .lifecycle-diagram {
+        flex-direction: column;
+    }
+    
+    .lifecycle-arrow {
+        transform: rotate(90deg);
+    }
+}
+
+/* ============================================
+   Pygments Syntax Highlighting (Dark Theme)
+   ============================================ */
+.highlight pre, .wiki-article pre {
+    background: #1a1a2e !important;
+    border: 1px solid var(--border, #333);
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    line-height: 1.6;
+    font-size: 0.88rem;
+}
+.highlight code, .wiki-article pre code {
+    font-family: 'Consolas', 'Monaco', 'Menlo', 'Courier New', monospace !important;
+    background: none !important;
+    padding: 0 !important;
+    border: none !important;
+    color: #e0e0e0;
+}
+/* Keywords: def, class, if, for, return, import, from, etc. */
+.highlight .k,  .highlight .kd, .highlight .kn,
+.highlight .kp, .highlight .kr { color: #c792ea; font-weight: 600; }
+/* Built-in names: print, range, len, True, False, None */
+.highlight .nb, .highlight .bp { color: #82aaff; }
+/* Built-in constants: True, False, None */
+.highlight .kc { color: #ff5370; font-weight: 600; }
+/* Function/class definitions */
+.highlight .nf, .highlight .fm { color: #82aaff; }
+.highlight .nc { color: #ffcb6b; }
+/* Strings */
+.highlight .s,  .highlight .s1, .highlight .s2,
+.highlight .sa, .highlight .sb, .highlight .sc,
+.highlight .sd, .highlight .se, .highlight .sh,
+.highlight .si, .highlight .sx, .highlight .sr,
+.highlight .ss { color: #c3e88d; }
+/* F-string braces */
+.highlight .si { color: #89ddff; }
+/* Numbers */
+.highlight .mi, .highlight .mf, .highlight .mh,
+.highlight .mo, .highlight .mb, .highlight .il { color: #f78c6c; }
+/* Comments */
+.highlight .c,  .highlight .c1, .highlight .cm,
+.highlight .ch, .highlight .cp, .highlight .cpf,
+.highlight .cs { color: #676e95; font-style: italic; }
+/* Operators */
+.highlight .o,  .highlight .ow { color: #89ddff; }
+/* Punctuation */
+.highlight .p  { color: #89ddff; }
+/* Decorators */
+.highlight .nd { color: #ffcb6b; }
+/* Self, cls */
+.highlight .bp { color: #f07178; }
+/* Variable names */
+.highlight .n  { color: #e0e0e0; }
+/* Attribute access */
+.highlight .na { color: #82aaff; }
+/* Generic output / traceback */
+.highlight .go { color: #676e95; }
+.highlight .gp { color: #89ddff; }

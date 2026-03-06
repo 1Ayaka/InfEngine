@@ -1,0 +1,291 @@
+"""
+Camera — Python InfComponent wrapper for the C++ Camera component.
+
+Exposes projection settings, clear flags, culling mask, and coordinate
+conversion as CppProperty descriptors and delegate methods.
+
+Provides built-in Gizmos drawing (frustum wireframe) via
+``on_draw_gizmos_selected()``, rendered automatically by the GizmosCollector
+when the camera is selected.
+
+Example::
+
+    from InfEngine.components.builtin import Camera
+    from InfEngine.lib import CameraProjection
+
+    class CinematicCamera(InfComponent):
+        def start(self):
+            cam = self.get_component(Camera)
+            cam.field_of_view = 45.0
+            cam.near_clip = 0.1
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Any, Optional, Tuple
+
+from InfEngine.components.builtin_component import BuiltinComponent, CppProperty
+from InfEngine.components.serialized_field import FieldType
+
+
+# Maximum far-plane distance for gizmo visualization (Unity caps ~1000)
+_FAR_CLIP_VISUAL_CAP = 1000.0
+
+# Gizmo color — Unity uses white for camera gizmos
+_CAMERA_GIZMO_COLOR = (1.0, 1.0, 1.0)
+
+
+class Camera(BuiltinComponent):
+    """Python wrapper for the C++ Camera component.
+
+    Properties delegate to the C++ ``Camera`` via CppProperty.
+    Draws a Unity-style frustum wireframe gizmo when selected.
+    """
+
+    _cpp_type_name = "Camera"
+    _component_category_ = "Rendering"
+
+    # Gizmo visibility: only show frustum wireframe when camera is selected
+    always_show = False
+
+    # Scene icon: white diamond shown at camera position (Unity-style)
+    gizmo_icon_color = (1.0, 1.0, 1.0)
+
+    # ---- Projection ----
+    projection_mode = CppProperty(
+        "projection_mode",
+        FieldType.ENUM,
+        default=None,
+        enum_type="CameraProjection",
+        enum_labels=["Perspective", "Orthographic"],
+        tooltip="Camera projection mode (Perspective or Orthographic)",
+    )
+    field_of_view = CppProperty(
+        "field_of_view",
+        FieldType.FLOAT,
+        default=60.0,
+        range=(1.0, 179.0),
+        visible_when=lambda comp: int(comp.projection_mode) == 0,
+        tooltip="Field of view in degrees (Perspective mode)",
+    )
+    orthographic_size = CppProperty(
+        "orthographic_size",
+        FieldType.FLOAT,
+        default=5.0,
+        visible_when=lambda comp: int(comp.projection_mode) == 1,
+        tooltip="Orthographic half-height (Orthographic mode)",
+    )
+    aspect_ratio = CppProperty(
+        "aspect_ratio",
+        FieldType.FLOAT,
+        default=1.778,
+        readonly=True,
+        tooltip="Aspect ratio (width / height)",
+    )
+
+    # ---- Clipping ----
+    near_clip = CppProperty(
+        "near_clip",
+        FieldType.FLOAT,
+        default=0.01,
+        header="Clipping",
+        tooltip="Near clipping plane distance",
+    )
+    far_clip = CppProperty(
+        "far_clip",
+        FieldType.FLOAT,
+        default=1000.0,
+        tooltip="Far clipping plane distance",
+    )
+
+    # ---- Multi-camera ----
+    depth = CppProperty(
+        "depth",
+        FieldType.FLOAT,
+        default=0.0,
+        tooltip="Rendering depth (lower renders first, like Unity Camera.depth)",
+    )
+    culling_mask = CppProperty(
+        "culling_mask",
+        FieldType.INT,
+        default=0xFFFFFFFF,
+        readonly=True,
+        tooltip="Layer culling bitmask (which layers this camera renders)",
+    )
+
+    # ---- Clear flags & background ----
+    clear_flags = CppProperty(
+        "clear_flags",
+        FieldType.ENUM,
+        default=None,
+        enum_type="CameraClearFlags",
+        enum_labels=["Skybox", "Solid Color", "Depth Only", "Don't Clear"],
+        header="Clear",
+        tooltip="Camera clear flags (Skybox, SolidColor, DepthOnly, DontClear)",
+    )
+    background_color = CppProperty(
+        "background_color",
+        FieldType.VEC4,
+        default=None,
+        visible_when=lambda comp: int(comp.clear_flags) == 1,
+        tooltip="Background color (r, g, b, a) — used when clear_flags == SolidColor",
+    )
+
+    # ------------------------------------------------------------------
+    # Read-only properties (delegates)
+    # ------------------------------------------------------------------
+
+    @property
+    def pixel_width(self) -> int:
+        """Render target width in pixels (read-only)."""
+        cpp = self._cpp_component
+        if cpp is not None:
+            return cpp.pixel_width
+        return 0
+
+    @property
+    def pixel_height(self) -> int:
+        """Render target height in pixels (read-only)."""
+        cpp = self._cpp_component
+        if cpp is not None:
+            return cpp.pixel_height
+        return 0
+
+    # ------------------------------------------------------------------
+    # Coordinate conversion (delegate methods)
+    # ------------------------------------------------------------------
+
+    def screen_to_world_point(
+        self, x: float, y: float, depth: float = 0.0
+    ) -> Optional[Tuple[float, float, float]]:
+        """Convert screen coordinates (x, y) + depth [0..1] to world position."""
+        cpp = self._cpp_component
+        if cpp is not None:
+            return cpp.screen_to_world_point(x, y, depth)
+        return None
+
+    def world_to_screen_point(
+        self, x: float, y: float, z: float
+    ) -> Optional[Tuple[float, float]]:
+        """Convert world position to screen coordinates (x, y)."""
+        cpp = self._cpp_component
+        if cpp is not None:
+            return cpp.world_to_screen_point(x, y, z)
+        return None
+
+    def screen_point_to_ray(
+        self, x: float, y: float
+    ) -> Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
+        """Build a ray from viewport-relative screen coordinates.
+
+        Returns ``((ox, oy, oz), (dx, dy, dz))`` — origin at the near
+        plane and a normalised direction vector.
+        """
+        cpp = self._cpp_component
+        if cpp is not None:
+            return cpp.screen_point_to_ray(x, y)
+        return None
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def serialize(self) -> str:
+        """Serialize Camera to JSON string (delegates to C++)."""
+        cpp = self._cpp_component
+        if cpp is not None:
+            return cpp.serialize()
+        return "{}"
+
+    def deserialize(self, json_str: str) -> bool:
+        """Deserialize Camera from JSON string (delegates to C++)."""
+        cpp = self._cpp_component
+        if cpp is not None:
+            return cpp.deserialize(json_str)
+        return False
+
+    # ------------------------------------------------------------------
+    # Gizmos — Unity-style camera frustum + body icon
+    # ------------------------------------------------------------------
+
+    def on_draw_gizmos_selected(self):
+        """Draw camera frustum wireframe and body icon when selected.
+
+        Called automatically by the GizmosCollector when the owning
+        GameObject (or an ancestor) is selected in the editor.
+        Replicates Unity's camera gizmo appearance: wireframe frustum
+        (perspective or orthographic), a small film-gate rectangle, a
+        camera body, and a film reel triangle on top.
+        """
+        from InfEngine.gizmos import Gizmos
+
+        go = self.game_object
+        if go is None:
+            return
+        transform = go.get_transform()
+        if transform is None:
+            return
+
+        # Read transform basis vectors
+        pos = transform.position
+        position = (pos.x, pos.y, pos.z)
+        fwd = transform.forward
+        forward = (fwd.x, fwd.y, fwd.z)
+        u = transform.up
+        up = (u.x, u.y, u.z)
+        r = transform.right
+        right = (r.x, r.y, r.z)
+
+        fov = self.field_of_view
+        aspect = self.aspect_ratio
+        near = self.near_clip
+        far = min(self.far_clip, _FAR_CLIP_VISUAL_CAP)
+
+        from InfEngine.lib import CameraProjection
+        is_ortho = (self.projection_mode == CameraProjection.Orthographic)
+        ortho_size = self.orthographic_size if is_ortho else 0.0
+
+        Gizmos.color = _CAMERA_GIZMO_COLOR
+
+        # ---- Frustum wireframe ----
+        if is_ortho:
+            self._draw_ortho_frustum(position, forward, up, right,
+                                     ortho_size, aspect, near, far)
+        else:
+            Gizmos.draw_frustum(position, fov, aspect, near, far,
+                                forward, up, right)
+
+    # ---- Helper: orthographic frustum ----
+
+    @staticmethod
+    def _draw_ortho_frustum(position, forward, up, right,
+                            ortho_size, aspect, near, far):
+        from InfEngine.gizmos import Gizmos
+
+        hh = ortho_size
+        hw = ortho_size * aspect
+
+        def _a(a, b):
+            return (a[0]+b[0], a[1]+b[1], a[2]+b[2])
+        def _s(v, s):
+            return (v[0]*s, v[1]*s, v[2]*s)
+
+        nc = _a(position, _s(forward, near))
+        fc = _a(position, _s(forward, far))
+
+        ntl = _a(_a(nc, _s(up, hh)), _s(right, -hw))
+        ntr = _a(_a(nc, _s(up, hh)), _s(right,  hw))
+        nbr = _a(_a(nc, _s(up,-hh)), _s(right,  hw))
+        nbl = _a(_a(nc, _s(up,-hh)), _s(right, -hw))
+        ftl = _a(_a(fc, _s(up, hh)), _s(right, -hw))
+        ftr = _a(_a(fc, _s(up, hh)), _s(right,  hw))
+        fbr = _a(_a(fc, _s(up,-hh)), _s(right,  hw))
+        fbl = _a(_a(fc, _s(up,-hh)), _s(right, -hw))
+
+        for a, b in [(ntl,ntr),(ntr,nbr),(nbr,nbl),(nbl,ntl),
+                     (ftl,ftr),(ftr,fbr),(fbr,fbl),(fbl,ftl),
+                     (ntl,ftl),(ntr,ftr),(nbr,fbr),(nbl,fbl)]:
+            Gizmos.draw_line(a, b)
+
+

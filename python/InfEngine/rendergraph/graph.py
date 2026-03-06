@@ -1,0 +1,826 @@
+"""
+RenderGraph Builder API (Phase 2)
+
+Pure Python graph builder that constructs a RenderGraphDescription.
+The description is then sent to C++ for DAG compilation and execution.
+
+Design: Builder pattern with fluent API for clean, LLM-friendly usage.
+
+    graph = RenderGraph("ForwardPipeline")
+    graph.create_texture("color", camera_target=True)
+    graph.create_texture("depth", format=Format.D32_SFLOAT)
+
+    with graph.add_pass("Opaque") as p:
+        p.write_color("color")
+        p.write_depth("depth")
+        p.set_clear(color=(0.1, 0.1, 0.1, 1.0), depth=1.0)
+        p.draw_renderers(queue_range=(0, 2500), sort_mode="front_to_back")
+
+    graph.set_output("color")
+    desc = graph.build()  # -> RenderGraphDescription (C++ POD)
+"""
+
+from __future__ import annotations
+
+from enum import IntEnum
+from typing import Optional, Tuple, List, Dict
+
+# Try to import the native types. If unavailable, we define stubs so the
+# Python-side graph can still be built and tested without a running engine.
+from InfEngine.lib import (
+    RenderGraphDescription,
+    GraphPassDesc,
+    GraphTextureDesc,
+    GraphPassActionType,
+    VkFormat,
+)
+_HAS_NATIVE = True
+
+
+# ============================================================================
+# Format enum — Pythonic wrapper around VkFormat subset
+# ============================================================================
+
+class Format(IntEnum):
+    """Common texture formats for RenderGraph resources.
+
+    Maps to VkFormat values used by the C++ backend. This subset covers
+    the most common render target formats.
+    """
+    # Color formats
+    RGBA8_UNORM = 37       # VK_FORMAT_R8G8B8A8_UNORM
+    RGBA8_SRGB = 43        # VK_FORMAT_R8G8B8A8_SRGB
+    BGRA8_UNORM = 44       # VK_FORMAT_B8G8R8A8_UNORM
+    RGBA16_SFLOAT = 97     # VK_FORMAT_R16G16B16A16_SFLOAT
+    RGBA32_SFLOAT = 109    # VK_FORMAT_R32G32B32A32_SFLOAT
+    R32_SFLOAT = 100       # VK_FORMAT_R32_SFLOAT
+
+    # Depth formats
+    D32_SFLOAT = 126       # VK_FORMAT_D32_SFLOAT
+    D24_UNORM_S8_UINT = 129  # VK_FORMAT_D24_UNORM_S8_UINT
+
+    @property
+    def is_depth(self) -> bool:
+        """Check if this is a depth/stencil format."""
+        return self in (Format.D32_SFLOAT, Format.D24_UNORM_S8_UINT)
+
+
+# ============================================================================
+# TextureHandle — lightweight handle to a graph texture resource
+# ============================================================================
+
+class TextureHandle:
+    """Opaque handle to a texture resource in the RenderGraph.
+
+    Not meant to be constructed directly — use ``RenderGraph.create_texture()``.
+    """
+
+    def __init__(self, name: str, format: Format, is_camera_target: bool = False,
+                 size: "Optional[Tuple[int, int]]" = None,
+                 size_divisor: int = 0):
+        self.name = name
+        self.format = format
+        self.is_camera_target = is_camera_target
+        self.size = size  # (width, height) or None for scene target size
+        self.size_divisor = size_divisor  # >1: scene_size / divisor
+
+    @property
+    def is_depth(self) -> bool:
+        return self.format.is_depth
+
+    def __repr__(self) -> str:
+        tag = " [camera_target]" if self.is_camera_target else ""
+        return f"<TextureHandle '{self.name}' {self.format.name}{tag}>"
+
+    def __eq__(self, other):
+        if isinstance(other, TextureHandle):
+            return self.name == other.name
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(self.name)
+
+
+# ============================================================================
+# RenderPassBuilder — configures a single pass in the graph
+# ============================================================================
+
+class RenderPassBuilder:
+    """Builder for configuring a single render pass.
+
+    Provides a fluent API for declaring inputs, outputs, clear settings,
+    and the render action for a pass. Also usable as a context manager::
+
+        with graph.add_pass("OpaquePass") as p:
+            p.write_color("color")
+            p.draw_renderers(queue_range=(0, 2500))
+
+    All resource arguments (``read``, ``write_color``, ``write_depth``,
+    ``set_input``) accept **either** a string alias (resolved via
+    ``graph.get_texture()``) or a ``TextureHandle`` directly.
+    """
+
+    def __init__(self, name: str, graph: "RenderGraph | None" = None):
+        self._name = name
+        self._graph = graph
+        self._reads: List[str] = []
+        self._write_colors: Dict[int, str] = {}  # slot -> texture_name (MRT)
+        self._write_depth: Optional[str] = None
+        self._clear_color: Optional[Tuple[float, float, float, float]] = None
+        self._clear_depth: Optional[float] = None
+        self._action = "none"
+        self._queue_min = 0
+        self._queue_max = 5000
+        self._sort_mode = "none"
+        self._input_bindings: Dict[str, str] = {}  # sampler -> texture_name
+        self._light_index = 0
+        self._shadow_type = "hard"
+        self._screen_ui_list = 0
+        self._shader_name: str = ""
+        self._push_constants: Dict[str, float] = {}
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    # ---- String / handle resolution ----
+
+    def _resolve(self, texture) -> "TextureHandle":
+        """Resolve a string alias or ``TextureHandle`` to ``TextureHandle``."""
+        if isinstance(texture, str):
+            if self._graph is None:
+                raise ValueError(
+                    f"Cannot resolve alias '{texture}' without graph reference"
+                )
+            handle = self._graph.get_texture(texture)
+            if handle is None:
+                raise ValueError(
+                    f"Texture '{texture}' not found in graph "
+                    f"'{self._graph.name}'"
+                )
+            return handle
+        return texture
+
+    # ---- Resource declarations ----
+
+    def read(self, texture) -> "RenderPassBuilder":
+        """Declare a texture input dependency.
+
+        Args:
+            texture: Texture alias (``str``) or ``TextureHandle``.
+        """
+        handle = self._resolve(texture)
+        if handle.name not in self._reads:
+            self._reads.append(handle.name)
+        return self
+
+    def write_color(self, texture, slot: int = 0) -> "RenderPassBuilder":
+        """Declare a color output attachment.
+
+        Args:
+            texture: Texture alias (``str``) or ``TextureHandle``.
+            slot: Color attachment slot (0 = primary, higher = MRT).
+        """
+        handle = self._resolve(texture)
+        self._write_colors[slot] = handle.name
+        return self
+
+    def write_depth(self, texture) -> "RenderPassBuilder":
+        """Declare the depth output attachment.
+
+        Args:
+            texture: Texture alias (``str``) or ``TextureHandle``.
+        """
+        handle = self._resolve(texture)
+        self._write_depth = handle.name
+        return self
+
+    def set_input(
+        self,
+        sampler_name: str,
+        texture,
+    ) -> "RenderPassBuilder":
+        """Bind a graph texture to a shader sampler.
+
+        Args:
+            sampler_name: Sampler name in the shader
+                          (e.g. ``"shadowMap"``).
+            texture: Texture alias (``str``) or ``TextureHandle``.
+        """
+        handle = self._resolve(texture)
+        self._input_bindings[sampler_name] = handle.name
+        if handle.name not in self._reads:
+            self._reads.append(handle.name)
+        return self
+
+    # ---- Clear settings ----
+
+    def set_clear(
+        self,
+        color: Optional[Tuple[float, float, float, float]] = None,
+        depth: Optional[float] = None,
+    ) -> "RenderPassBuilder":
+        """Set clear values for this pass.
+
+        Args:
+            color: RGBA clear color tuple, or None to not clear color.
+            depth: Depth clear value, or None to not clear depth.
+        """
+        self._clear_color = color
+        self._clear_depth = depth
+        return self
+
+    # ---- Render actions ----
+
+    def draw_renderers(
+        self,
+        queue_range: Tuple[int, int] = (0, 5000),
+        sort_mode: str = "none",
+    ) -> "RenderPassBuilder":
+        """Configure this pass to draw scene renderers.
+
+        Args:
+            queue_range: (min, max) inclusive render queue range for filtering.
+                         Opaque = (0, 2500), Transparent = (2501, 5000).
+            sort_mode: Sorting strategy — "front_to_back", "back_to_front",
+                       "optimize_state", or "none".
+        """
+        self._action = "draw_renderers"
+        self._queue_min, self._queue_max = queue_range
+        self._sort_mode = sort_mode
+        return self
+
+    def draw_skybox(self) -> "RenderPassBuilder":
+        """Configure this pass to draw the procedural skybox."""
+        self._action = "draw_skybox"
+        return self
+
+    def draw_shadow_casters(
+        self,
+        queue_range: Tuple[int, int] = (0, 2999),
+        light_index: int = 0,
+        shadow_type: str = "hard",
+    ) -> "RenderPassBuilder":
+        """Configure this pass to render shadow casters into a depth-only shadow map.
+
+        Uses a dedicated shadow pipeline (shadow.vert / shadow.frag) with
+        front-face culling and depth bias for shadow acne prevention.
+
+        Args:
+            queue_range: (min, max) inclusive render queue range for shadow casters.
+                         Default (0, 2999) covers all opaque geometry regardless of queue.
+            light_index: Index of the shadow-casting light (0 = first directional).
+            shadow_type: Shadow quality — ``"hard"`` or ``"soft"``.
+        """
+        self._action = "draw_shadow_casters"
+        self._queue_min, self._queue_max = queue_range
+        self._light_index = light_index
+        self._shadow_type = shadow_type
+        return self
+
+    def draw_screen_ui(
+        self,
+        list: "str | int" = "camera",
+        *,
+        screen_ui_list: "int | None" = None,
+    ) -> "RenderPassBuilder":
+        """Configure this pass to draw screen-space UI.
+
+        The UI commands are accumulated via InfScreenUIRenderer during BuildFrame
+        and rendered here inside the scene render graph.
+
+        Args:
+            list: ``"camera"`` (before post-process, affected by post-processing)
+                  or ``"overlay"`` (after post-process, on top of everything).
+                  Legacy integer values 0/1 are also accepted for backward
+                  compatibility.
+            screen_ui_list: **Deprecated** — use *list* instead.
+        """
+        _str_to_int = {"camera": 0, "overlay": 1}
+        # Backward-compat: keyword `screen_ui_list=` overrides positional
+        if screen_ui_list is not None:
+            value = screen_ui_list
+        elif isinstance(list, int):
+            value = list
+        else:
+            value = _str_to_int.get(list.lower())
+            if value is None:
+                raise ValueError(
+                    f"Unknown screen UI list '{list}'. "
+                    f"Expected 'camera' or 'overlay'."
+                )
+        self._action = "draw_screen_ui"
+        self._screen_ui_list = value
+        return self
+
+    def fullscreen_quad(
+        self,
+        shader: str,
+        **push_constants: float,
+    ) -> "RenderPassBuilder":
+        """Configure this pass to draw a fullscreen triangle with a named shader.
+
+        The vertex shader is always ``fullscreen_triangle``; the fragment
+        shader is looked up by *shader* (which must have a matching
+        ``@shader_id``).  Keyword arguments become push constants passed
+        to the fragment shader in declaration order.
+
+        Args:
+            shader: Fragment shader id (e.g. ``"bloom_prefilter"``).
+            **push_constants: Named float push constants.
+        """
+        self._action = "fullscreen_quad"
+        self._shader_name = shader
+        self._push_constants = dict(push_constants)
+        return self
+
+    # ---- Context manager support ----
+
+    def __enter__(self) -> "RenderPassBuilder":
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def __repr__(self) -> str:
+        return (f"<RenderPassBuilder '{self._name}' "
+                f"action={self._action}>")
+
+
+# ============================================================================
+# RenderGraph — the main graph builder
+# ============================================================================
+
+class RenderGraph:
+    """Python-side RenderGraph topology builder.
+
+    Unified API: textures have string aliases, injection points are
+    declared inline, and the topology sequence is auto-recorded.
+
+    Example::
+
+        graph = RenderGraph("ForwardPipeline")
+
+        graph.create_texture("color", camera_target=True)
+        graph.create_texture("depth", format=Format.D32_SFLOAT)
+
+        with graph.add_pass("OpaquePass") as p:
+            p.write_color("color")
+            p.write_depth("depth")
+            p.set_clear(color=(0.1, 0.1, 0.1, 1.0), depth=1.0)
+            p.draw_renderers(queue_range=(0, 2500), sort_mode="front_to_back")
+
+        graph.injection_point("after_opaque", resources={"color", "depth"})
+
+        graph.set_output("color")
+        desc = graph.build()
+    """
+
+    def __init__(self, name: str = "RenderGraph"):
+        self._name = name
+        self._textures: List[TextureHandle] = []
+        self._passes: List[RenderPassBuilder] = []
+        self._output: Optional[str] = None
+        self._msaa_samples: int = 0  # 0 = no preference (keep current)
+        # Topology auto-recording
+        self._topology: List[Tuple[str, str]] = []
+        self._injection_points_list: List = []  # List[InjectionPoint]
+        # Optional callback invoked at each injection_point() (set by RenderStack)
+        self._injection_callback = None
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def set_msaa_samples(self, samples: int) -> None:
+        """Set MSAA sample count for this graph (1=off, 2, 4, 8).
+
+        The setting is applied to the engine before the graph executes.
+        Use 0 to leave the current MSAA setting unchanged.
+        """
+        if samples not in (0, 1, 2, 4, 8):
+            raise ValueError(f"Invalid MSAA sample count: {samples}. Must be 0, 1, 2, 4, or 8.")
+        self._msaa_samples = samples
+
+    @property
+    def pass_count(self) -> int:
+        return len(self._passes)
+
+    @property
+    def texture_count(self) -> int:
+        return len(self._textures)
+
+    @property
+    def topology_sequence(self) -> List[Tuple[str, str]]:
+        """Auto-recorded topology: ``[("pass", name), ("ip", display), ...]``."""
+        return list(self._topology)
+
+    @property
+    def injection_points(self) -> list:
+        """All injection points declared via ``injection_point()``."""
+        return list(self._injection_points_list)
+
+    # ---- Resource creation ----
+
+    def create_texture(
+        self,
+        name: str,
+        *,
+        format: Format = Format.RGBA8_UNORM,
+        camera_target: bool = False,
+        size: "Optional[Tuple[int, int]]" = None,
+        size_divisor: int = 0,
+    ) -> TextureHandle:
+        """Create a texture resource.
+
+        Unified method — use keyword args for special textures::
+
+            graph.create_texture("color", camera_target=True)
+            graph.create_texture("depth", format=Format.D32_SFLOAT)
+            graph.create_texture("shadow_map", format=Format.D32_SFLOAT, size=(4096, 4096))
+            graph.create_texture("bloom_half", size_divisor=2)  # half-res
+
+        Args:
+            name: Unique string alias (e.g. ``"color"``, ``"depth"``).
+            format: Texture format.
+            camera_target: If ``True``, this is the camera's main color
+                output. Resolution and format are determined by the engine.
+            size: (width, height) custom resolution. ``None`` uses the
+                scene render target size. Useful for shadow maps.
+            size_divisor: Divide scene resolution by this value (>1).
+                Mutually exclusive with *size*.
+        """
+        for tex in self._textures:
+            if tex.name == name:
+                raise ValueError(
+                    f"Texture '{name}' already exists in graph '{self._name}'"
+                )
+
+        handle = TextureHandle(name, format, is_camera_target=camera_target,
+                               size=size, size_divisor=size_divisor)
+        self._textures.append(handle)
+        return handle
+
+    def get_texture(self, name: str) -> Optional[TextureHandle]:
+        """Look up a texture by its string alias.
+
+        Returns:
+            ``TextureHandle`` or ``None`` if not found.
+        """
+        for tex in self._textures:
+            if tex.name == name:
+                return tex
+        return None
+
+    # ---- Query helpers ----
+
+    def has_pass(self, name: str) -> bool:
+        """Check if a pass with *name* has already been added."""
+        return any(p._name == name for p in self._passes)
+
+    def has_injection_point(self, name: str) -> bool:
+        """Check if an injection point with *name* has been declared."""
+        return any(ip.name == name for ip in self._injection_points_list)
+
+    # ---- Injection points ----
+
+    def injection_point(
+        self,
+        name: str,
+        *,
+        display_name: str = "",
+        resources: Optional[set] = None,
+    ) -> None:
+        """Declare an injection point at the current topology position.
+
+        RenderStack injects user-mounted passes here during graph build.
+
+        Args:
+            name: Unique identifier (e.g. ``"after_opaque"``).
+            display_name: Editor label (auto-generated from *name* if empty).
+            resources: Guaranteed-available resource names at this point.
+        """
+        from InfEngine.renderstack.injection_point import InjectionPoint
+
+        ip = InjectionPoint(
+            name=name,
+            display_name=display_name or name.replace("_", " ").title(),
+            resource_state=resources if resources is not None else {"color", "depth"},
+        )
+        self._injection_points_list.append(ip)
+        self._topology.append(("ip", ip.display_name))
+
+        if self._injection_callback is not None:
+            self._injection_callback(name)
+
+    # ---- Convenience: ScreenUI + post-process section ----
+
+    def screen_ui_section(self, *, resources: "set | None" = None) -> None:
+        """Insert the standard ScreenUI + post-process injection points.
+
+        This is a convenience shortcut that emits::
+
+            _ScreenUI_Camera          (draw_screen_ui list="camera")
+            before_post_process       (injection point)
+            after_post_process        (injection point)
+            _ScreenUI_Overlay         (draw_screen_ui list="overlay")
+
+        Custom pipelines can call this at the desired topology position.
+        This method is **explicit opt-in**: if a pipeline does not call
+        ``screen_ui_section()``, no ScreenUI section is added automatically.
+
+        Override behavior: each element is only inserted when missing, so
+        users may pre-declare one or more reserved names and let this method
+        fill the rest without duplication.
+
+        Args:
+            resources: Resource set advertised to injection points.
+                       Defaults to ``{"color"}``.
+        """
+        res = resources or {"color"}
+
+        if not self.has_pass("_ScreenUI_Camera"):
+            with self.add_pass("_ScreenUI_Camera") as p:
+                p.write_color("color")
+                p.draw_screen_ui(list="camera")
+
+        if not self.has_injection_point("before_post_process"):
+            self.injection_point("before_post_process", resources=res)
+        if not self.has_injection_point("after_post_process"):
+            self.injection_point("after_post_process", resources=res)
+
+        if not self.has_pass("_ScreenUI_Overlay"):
+            with self.add_pass("_ScreenUI_Overlay") as p:
+                p.write_color("color")
+                p.draw_screen_ui(list="overlay")
+
+    # ---- Pass management ----
+
+    def add_pass(self, name: str) -> RenderPassBuilder:
+        """Add a render pass to the graph.
+
+        Returns a ``RenderPassBuilder`` (also a context manager) that you
+        use to configure the pass::
+
+            with graph.add_pass("OpaquePass") as p:
+                p.write_color("color")
+                p.write_depth("depth")
+                p.draw_renderers(queue_range=(0, 2500))
+
+        The pass is appended to the topology sequence automatically.
+        """
+        builder = RenderPassBuilder(name, graph=self)
+        self._passes.append(builder)
+        self._topology.append(("pass", name))
+        return builder
+
+    # ---- Output ----
+
+    def set_output(self, texture) -> None:
+        """Mark a texture as the final graph output.
+
+        Args:
+            texture: Texture alias (``str``) or ``TextureHandle``.
+        """
+        if isinstance(texture, str):
+            handle = self.get_texture(texture)
+            if handle is None:
+                raise ValueError(
+                    f"set_output: Texture '{texture}' not found in graph "
+                    f"'{self._name}'"
+                )
+            self._output = handle.name
+        else:
+            self._output = texture.name
+
+    # ---- Validation & finalization ----
+
+    def validate_no_ip_before_first_pass(self) -> None:
+        """Raise ``ValueError`` if an injection point precedes the first pass.
+
+        The new API forbids IPs before the very first pass (use
+        ``after_opaque`` etc. instead).
+        """
+        for kind, _label in self._topology:
+            if kind == "pass":
+                return  # first entry is a pass — OK
+            if kind == "ip":
+                raise ValueError(
+                    f"Graph '{self._name}': injection point declared before "
+                    "the first pass. The new API does not allow IPs before "
+                    "the first pass."
+                )
+
+    # ---- Build ----
+
+    def build(self) -> "RenderGraphDescription":
+        """Build the graph into a C++ RenderGraphDescription.
+
+        Validates the graph topology and produces the POD structure that
+        C++ expects. Raises ValueError if there are validation issues.
+
+        ``before_post_process`` and ``after_post_process`` injection points
+        are **always** auto-injected at the end of the topology if the
+        pipeline did not already declare them (via ``screen_ui_section()``
+        or explicit ``injection_point()`` calls).  This guarantees that
+        user passes targeting those slots always have somewhere to attach,
+        regardless of the pipeline implementation.
+
+        Returns:
+            RenderGraphDescription (C++ POD) ready for
+            ``SceneRenderGraph.apply_python_graph()``.
+        """
+        # Validation
+        if not self._passes:
+            raise ValueError(f"Graph '{self._name}' has no passes")
+
+        # Auto-inject before/after_post_process injection points when the
+        # pipeline didn't declare them.  Uses has_injection_point() so
+        # pipelines that already define these (e.g. via screen_ui_section)
+        # are not affected.
+        _auto_res = {"color"}
+        if not self.has_injection_point("before_post_process"):
+            self.injection_point("before_post_process", resources=_auto_res)
+        if not self.has_injection_point("after_post_process"):
+            self.injection_point("after_post_process", resources=_auto_res)
+
+        if self._output is None:
+            # Auto-set output to camera_target if exists
+            for tex in self._textures:
+                if tex.is_camera_target:
+                    self._output = tex.name
+                    break
+
+        if self._output is None:
+            raise ValueError(
+                f"Graph '{self._name}' has no output. "
+                "Call graph.set_output(texture)."
+            )
+
+        if _HAS_NATIVE:
+            return self._build_native()
+        else:
+            return self._build_dict()
+
+    def _build_native(self):
+        """Build using native C++ types."""
+        desc = RenderGraphDescription()
+        desc.name = self._name
+
+        # Map Python Format → VkFormat. Only formats registered in the
+        # native binding can be used as VkFormat values.
+        _format_to_vk = {}
+        if VkFormat is not None:
+            _format_to_vk = {
+                Format.RGBA8_UNORM: VkFormat.R8G8B8A8_UNORM,
+                Format.RGBA8_SRGB: VkFormat.R8G8B8A8_SRGB,
+                Format.BGRA8_UNORM: VkFormat.B8G8R8A8_UNORM,
+                Format.RGBA16_SFLOAT: VkFormat.R16G16B16A16_SFLOAT,
+                Format.RGBA32_SFLOAT: VkFormat.R32G32B32A32_SFLOAT,
+                Format.R32_SFLOAT: VkFormat.R32_SFLOAT,
+                Format.D32_SFLOAT: VkFormat.D32_SFLOAT,
+                Format.D24_UNORM_S8_UINT: VkFormat.D24_UNORM_S8_UINT,
+            }
+
+        # Build texture list — construct full list then assign (pybind11
+        # vectors return copies, so append() on a property doesn't work).
+        tex_list = []
+        for tex in self._textures:
+            td = GraphTextureDesc()
+            td.name = tex.name
+            vk_fmt = _format_to_vk.get(tex.format)
+            if vk_fmt is not None:
+                td.format = vk_fmt
+            td.is_backbuffer = tex.is_camera_target
+            td.is_depth = tex.is_depth
+            if tex.size is not None:
+                td.width = tex.size[0]
+                td.height = tex.size[1]
+            if tex.size_divisor > 0:
+                td.size_divisor = tex.size_divisor
+            tex_list.append(td)
+        desc.textures = tex_list
+
+        # Build pass list
+        _action_map = {
+            "none": GraphPassActionType.NONE,
+            "draw_renderers": GraphPassActionType.DRAW_RENDERERS,
+            "draw_skybox": GraphPassActionType.DRAW_SKYBOX,
+            "custom": GraphPassActionType.CUSTOM,
+            "draw_shadow_casters": GraphPassActionType.DRAW_SHADOW_CASTERS,
+            "draw_screen_ui": GraphPassActionType.DRAW_SCREEN_UI,
+            "fullscreen_quad": GraphPassActionType.FULLSCREEN_QUAD,
+        }
+
+        pass_list = []
+        for p in self._passes:
+            pd = GraphPassDesc()
+            pd.name = p._name
+            pd.read_textures = list(p._reads)
+            # MRT support: serialize write_colors as list of (slot, name) pairs
+            pd.write_colors = list(p._write_colors.items())
+            pd.write_depth = p._write_depth or ""
+
+            if p._clear_color is not None:
+                pd.clear_color = True
+                pd.clear_color_r = p._clear_color[0]
+                pd.clear_color_g = p._clear_color[1]
+                pd.clear_color_b = p._clear_color[2]
+                pd.clear_color_a = p._clear_color[3]
+            else:
+                pd.clear_color = False
+
+            if p._clear_depth is not None:
+                pd.clear_depth = True
+                pd.clear_depth_value = p._clear_depth
+            else:
+                pd.clear_depth = False
+
+            pd.action = _action_map.get(p._action, GraphPassActionType.NONE)
+            pd.queue_min = p._queue_min
+            pd.queue_max = p._queue_max
+            pd.sort_mode = p._sort_mode
+
+            # Shader input bindings (e.g. shadow map sampled textures)
+            pd.input_bindings = list(p._input_bindings.items())
+
+            # DrawShadowCasters parameters
+            pd.light_index = p._light_index
+            pd.shadow_type = p._shadow_type
+
+            # DrawScreenUI parameters
+            pd.screen_ui_list = p._screen_ui_list
+
+            # FullscreenQuad parameters
+            if p._shader_name:
+                pd.shader_name = p._shader_name
+            if p._push_constants:
+                pd.push_constants = list(p._push_constants.items())
+
+            pass_list.append(pd)
+        desc.passes = pass_list
+
+        desc.output_texture = self._output
+        desc.msaa_samples = self._msaa_samples
+        return desc
+
+    def _build_dict(self):
+        """Build as a dictionary (for testing without native module)."""
+        return {
+            "name": self._name,
+            "textures": [
+                {
+                    "name": tex.name,
+                    "format": int(tex.format),
+                    "is_backbuffer": tex.is_camera_target,
+                    "is_depth": tex.is_depth,
+                }
+                for tex in self._textures
+            ],
+            "passes": [
+                {
+                    "name": p._name,
+                    "reads": list(p._reads),
+                    "write_colors": dict(p._write_colors),
+                    "write_depth": p._write_depth or "",
+                    "clear_color": p._clear_color,
+                    "clear_depth": p._clear_depth,
+                    "action": p._action,
+                    "queue_min": p._queue_min,
+                    "queue_max": p._queue_max,
+                    "sort_mode": p._sort_mode,
+                    "input_bindings": dict(p._input_bindings),
+                }
+                for p in self._passes
+            ],
+            "output_texture": self._output,
+        }
+
+    # ---- Debug ----
+
+    def get_debug_string(self) -> str:
+        """Get a human-readable representation of the graph."""
+        lines = [f"RenderGraph '{self._name}':"]
+        lines.append(f"  Textures ({len(self._textures)}):")
+        for tex in self._textures:
+            tag = " [camera_target]" if tex.is_camera_target else ""
+            lines.append(f"    - {tex.name} ({tex.format.name}){tag}")
+
+        lines.append(f"  Passes ({len(self._passes)}):")
+        for i, p in enumerate(self._passes):
+            lines.append(f"    [{i}] {p._name} -> {p._action}")
+            if p._reads:
+                lines.append(f"          reads: {', '.join(p._reads)}")
+            if p._write_colors:
+                for slot, name in sorted(p._write_colors.items()):
+                    lines.append(f"          writes color[{slot}]: {name}")
+            if p._write_depth:
+                lines.append(f"          writes depth: {p._write_depth}")
+
+        if self._output:
+            lines.append(f"  Output: {self._output}")
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (f"<RenderGraph '{self._name}' "
+                f"passes={len(self._passes)} textures={len(self._textures)}>")

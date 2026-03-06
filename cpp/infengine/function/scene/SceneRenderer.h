@@ -1,0 +1,179 @@
+#pragma once
+
+#include "../scene/SceneSystem.h"
+#include <function/renderer/Frustum.h>
+#include <function/renderer/InfRenderStruct.h>
+#include <function/resources/InfMaterial/InfMaterial.h>
+#include <functional>
+#include <memory>
+#include <vector>
+#include <vulkan/vulkan.h>
+
+namespace infengine
+{
+
+/**
+ * @brief RenderableObject - data needed to render one object.
+ *
+ * This is a lightweight struct extracted from GameObject+MeshRenderer
+ * for efficient rendering without traversing the scene graph during draw calls.
+ */
+struct RenderableObject
+{
+    uint64_t objectId;
+    glm::mat4 worldMatrix;
+    MeshRef mesh;
+    std::vector<MaterialRef> materials;
+    std::shared_ptr<InfMaterial> renderMaterial; // Actual material for rendering
+    MeshRenderer *meshRenderer = nullptr;        // Direct pointer to avoid re-lookup
+    AABB worldBounds;                            // World-space bounding box for culling
+    bool visible;
+};
+
+/**
+ * @brief SceneRenderer - bridges Scene system with Vulkan rendering.
+ *
+ * Responsibilities:
+ * - Collect renderable objects from the active scene
+ * - Provide camera matrices to the renderer
+ * - Sort objects for rendering (by material, depth, etc.)
+ * - Culling (frustum, occlusion)
+ */
+class SceneRenderer
+{
+  public:
+    SceneRenderer() = default;
+    ~SceneRenderer() = default;
+
+    // ========================================================================
+    // Frame preparation
+    // ========================================================================
+
+    /// @brief Prepare render data for the current frame using editor camera.
+    /// Call this before DrawFrame()
+    void PrepareFrame();
+
+    /// @brief Prepare render data for a specific camera (independent culling).
+    /// Used by Game View to cull against the game camera's frustum.
+    void PrepareFrame(Camera *camera);
+
+    /// @brief Get the view matrix for rendering
+    [[nodiscard]] glm::mat4 GetViewMatrix() const;
+
+    /// @brief Get the projection matrix for rendering
+    [[nodiscard]] glm::mat4 GetProjectionMatrix() const;
+
+    /// @brief Get camera position for shaders
+    [[nodiscard]] glm::vec3 GetCameraPosition() const;
+
+    /// @brief Get camera forward direction
+    [[nodiscard]] glm::vec3 GetCameraForward() const;
+
+    /// @brief Get camera up vector
+    [[nodiscard]] glm::vec3 GetCameraUp() const;
+
+    // ========================================================================
+    // Renderable access
+    // ========================================================================
+
+    /// @brief Get all renderable objects for this frame
+    [[nodiscard]] const std::vector<RenderableObject> &GetRenderables() const
+    {
+        return m_renderables;
+    }
+
+    /// @brief Get number of visible objects after culling
+    [[nodiscard]] size_t GetVisibleCount() const
+    {
+        return m_visibleCount;
+    }
+
+    /// @brief Build draw calls from visible renderables.
+    /// Converts the culled/sorted RenderableObject list into DrawCall + combined vertex/index data.
+    /// @note Vertices remain in model/local space; per-object world transform is applied on GPU via push constants.
+    [[nodiscard]] DrawCallResult BuildDrawCalls() const;
+
+    // ========================================================================
+    // Settings
+    // ========================================================================
+
+    /// @brief Enable/disable frustum culling
+    void SetFrustumCullingEnabled(bool enabled)
+    {
+        m_frustumCulling = enabled;
+    }
+    [[nodiscard]] bool IsFrustumCullingEnabled() const
+    {
+        return m_frustumCulling;
+    }
+
+    /// @brief Set aspect ratio (from window)
+    void SetAspectRatio(float aspect);
+
+  private:
+    void CollectRenderables(uint32_t cullingMask = 0xFFFFFFFF);
+    void PerformCulling();
+    void SortRenderables();
+
+    std::vector<RenderableObject> m_renderables;
+    size_t m_visibleCount = 0;
+
+    bool m_frustumCulling = true;
+
+    // Cached camera state for the frame
+    Camera *m_activeCamera = nullptr;
+};
+
+/**
+ * @brief Helper to integrate SceneRenderer with existing InfVkCore.
+ *
+ * This provides the DrawScene callback that reads from SceneManager.
+ */
+class SceneRenderBridge
+{
+  public:
+    static SceneRenderBridge &Instance();
+
+    SceneRenderBridge(const SceneRenderBridge &) = delete;
+    SceneRenderBridge &operator=(const SceneRenderBridge &) = delete;
+
+    /// @brief Get the scene renderer
+    [[nodiscard]] SceneRenderer &GetSceneRenderer()
+    {
+        return m_sceneRenderer;
+    }
+
+    /// @brief Update camera data (call before DrawFrame)
+    /// Returns camera data in the format expected by InfVkCore::DrawFrame
+    void UpdateCameraData(float *outPos, float *outLookAt, float *outUp);
+
+    /// @brief Set aspect ratio from window dimensions
+    void OnWindowResize(uint32_t width, uint32_t height);
+
+    /// @brief Prepare editor camera rendering (call once per frame before draw calls)
+    void PrepareFrame();
+
+    /// @brief Prepare rendering for a specific camera (independent culling).
+    /// @param camera The camera to cull and collect renderables for.
+    /// @return DrawCallResult with draw calls visible to this camera.
+    [[nodiscard]] DrawCallResult PrepareAndBuildForCamera(Camera *camera);
+
+    /// @brief Build draw calls from the current frame's visible renderables.
+    /// Delegates to SceneRenderer::BuildDrawCalls().
+    [[nodiscard]] DrawCallResult BuildDrawCalls() const;
+
+    /// @brief Get the editor camera (always returns editor camera).
+    [[nodiscard]] Camera *GetEditorCamera() const;
+
+    /// @brief Get the active camera for rendering.
+    /// @deprecated Use GetEditorCamera() for editor, or pass camera explicitly.
+    [[nodiscard]] Camera *GetActiveCamera() const;
+
+  private:
+    SceneRenderBridge() = default;
+    ~SceneRenderBridge() = default;
+
+    SceneRenderer m_sceneRenderer;
+};
+
+} // namespace infengine

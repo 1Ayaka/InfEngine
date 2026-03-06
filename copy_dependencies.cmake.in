@@ -1,0 +1,53 @@
+# Auto-generated script to copy DLL dependencies
+set(TARGET_DIR "@PYTHON_TARGET_DIR@")
+set(BUILD_DIR "@CMAKE_BINARY_DIR@")
+set(SOURCE_DIR "@CMAKE_SOURCE_DIR@")
+
+# Function to copy file if it exists
+function(copy_if_exists src dest)
+    if(EXISTS "${src}")
+        message(STATUS "Copying ${src} to ${dest}")
+        file(COPY "${src}" DESTINATION "${dest}")
+    else()
+        message(STATUS "File not found: ${src}")
+    endif()
+endfunction()
+
+# List of known DLL directories to search
+set(DLL_SEARCH_DIRS
+    "${BUILD_DIR}/external/Release"
+    "${BUILD_DIR}/external/assimp/bin/Release"
+    "${BUILD_DIR}/external/glslang/glslang/Release"
+    "${BUILD_DIR}/external/glslang/SPIRV/Release"
+    "${BUILD_DIR}/external/SDL/Release"
+    "${BUILD_DIR}/Release"
+)
+
+# Search for all DLL files in the build directories
+foreach(search_dir ${DLL_SEARCH_DIRS})
+    if(EXISTS "${search_dir}")
+        file(GLOB dll_files "${search_dir}/*.dll")
+        foreach(dll_file ${dll_files})
+            get_filename_component(dll_name ${dll_file} NAME)
+            copy_if_exists("${dll_file}" "${TARGET_DIR}")
+        endforeach()
+    endif()
+endforeach()
+
+# Also search for any other DLL files that might be in subdirectories
+file(GLOB_RECURSE all_dlls "${BUILD_DIR}/*.dll")
+foreach(dll_file ${all_dlls})
+    # Skip if it's already in the target directory
+    get_filename_component(dll_dir ${dll_file} DIRECTORY)
+    get_filename_component(dll_name ${dll_file} NAME)
+    
+    # Skip if it's a debug DLL (contains 'd' suffix)
+    if(NOT dll_name MATCHES ".*d\\.dll$")
+        # Check if it's a release DLL by checking if it's in a Release directory
+        if(dll_dir MATCHES ".*/Release$" OR dll_dir MATCHES ".*/Release/.*")
+            copy_if_exists("${dll_file}" "${TARGET_DIR}")
+        endif()
+    endif()
+endforeach()
+
+message(STATUS "Finished copying DLL dependencies to ${TARGET_DIR}")

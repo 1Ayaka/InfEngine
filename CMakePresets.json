@@ -1,0 +1,45 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20
+  },
+
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "Release Preset",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build",
+
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release"
+    },
+    {
+      "name": "format",
+      "configurePreset": "release",
+      "configuration": "Release",
+      "targets": [
+        "clang_format"
+      ]
+    },
+    {
+      "name": "wiki",
+      "configurePreset": "release",
+      "configuration": "Release",
+      "targets": [
+        "build_wiki_html"
+      ]
+    }
+  ]
+}

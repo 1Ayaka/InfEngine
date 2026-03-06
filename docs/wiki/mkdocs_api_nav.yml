@@ -1,0 +1,101 @@
+# Auto-generated API nav — copy into mkdocs.yml if needed
+
+# API Reference
+#   InfEngine:
+#     - Camera: en/api/Camera.md
+#     - CameraClearFlags: en/api/CameraClearFlags.md
+#     - CameraProjection: en/api/CameraProjection.md
+#     - Component: en/api/Component.md
+#     - GameObject: en/api/GameObject.md
+#     - Light: en/api/Light.md
+#     - LightShadows: en/api/LightShadows.md
+#     - LightType: en/api/LightType.md
+#     - LogLevel: en/api/LogLevel.md
+#     - MeshRenderer: en/api/MeshRenderer.md
+#     - PrimitiveType: en/api/PrimitiveType.md
+#     - Scene: en/api/Scene.md
+#     - SceneManager: en/api/SceneManager.md
+#     - Transform: en/api/Transform.md
+#   InfEngine.components:
+#     - InfComponent: en/api/InfComponent.md
+#     - add_component_menu: en/api/add_component_menu.md
+#     - disallow_multiple: en/api/disallow_multiple.md
+#     - execute_in_edit_mode: en/api/execute_in_edit_mode.md
+#     - help_url: en/api/help_url.md
+#     - hide_field: en/api/hide_field.md
+#     - icon: en/api/icon.md
+#     - require_component: en/api/require_component.md
+#     - serialized_field: en/api/serialized_field.md
+#   InfEngine.components.builtin:
+#     - Camera: en/api/Camera.md
+#     - Light: en/api/Light.md
+#     - MeshRenderer: en/api/MeshRenderer.md
+#   InfEngine.core:
+#     - Material: en/api/Material.md
+#     - MeshData: en/api/MeshData.md
+#     - Shader: en/api/Shader.md
+#     - Texture: en/api/Texture.md
+#   InfEngine.debug:
+#     - Debug: en/api/Debug.md
+#   InfEngine.gizmos:
+#     - Gizmos: en/api/Gizmos.md
+#   InfEngine.input:
+#     - Input: en/api/Input.md
+#     - KeyCode: en/api/KeyCode.md
+#   InfEngine.math:
+#     - vector2: en/api/vector2.md
+#     - vector3: en/api/vector3.md
+#     - vector4: en/api/vector4.md
+#   InfEngine.scene:
+#     - LayerMask: en/api/LayerMask.md
+#     - SceneManager: en/api/SceneManager.md
+
+# API 参考手册
+#   InfEngine:
+#     - Camera: zh/api/Camera.md
+#     - CameraClearFlags: zh/api/CameraClearFlags.md
+#     - CameraProjection: zh/api/CameraProjection.md
+#     - Component: zh/api/Component.md
+#     - GameObject: zh/api/GameObject.md
+#     - Light: zh/api/Light.md
+#     - LightShadows: zh/api/LightShadows.md
+#     - LightType: zh/api/LightType.md
+#     - LogLevel: zh/api/LogLevel.md
+#     - MeshRenderer: zh/api/MeshRenderer.md
+#     - PrimitiveType: zh/api/PrimitiveType.md
+#     - Scene: zh/api/Scene.md
+#     - SceneManager: zh/api/SceneManager.md
+#     - Transform: zh/api/Transform.md
+#   InfEngine.components:
+#     - InfComponent: zh/api/InfComponent.md
+#     - add_component_menu: zh/api/add_component_menu.md
+#     - disallow_multiple: zh/api/disallow_multiple.md
+#     - execute_in_edit_mode: zh/api/execute_in_edit_mode.md
+#     - help_url: zh/api/help_url.md
+#     - hide_field: zh/api/hide_field.md
+#     - icon: zh/api/icon.md
+#     - require_component: zh/api/require_component.md
+#     - serialized_field: zh/api/serialized_field.md
+#   InfEngine.components.builtin:
+#     - Camera: zh/api/Camera.md
+#     - Light: zh/api/Light.md
+#     - MeshRenderer: zh/api/MeshRenderer.md
+#   InfEngine.core:
+#     - Material: zh/api/Material.md
+#     - MeshData: zh/api/MeshData.md
+#     - Shader: zh/api/Shader.md
+#     - Texture: zh/api/Texture.md
+#   InfEngine.debug:
+#     - Debug: zh/api/Debug.md
+#   InfEngine.gizmos:
+#     - Gizmos: zh/api/Gizmos.md
+#   InfEngine.input:
+#     - Input: zh/api/Input.md
+#     - KeyCode: zh/api/KeyCode.md
+#   InfEngine.math:
+#     - vector2: zh/api/vector2.md
+#     - vector3: zh/api/vector3.md
+#     - vector4: zh/api/vector4.md
+#   InfEngine.scene:
+#     - LayerMask: zh/api/LayerMask.md
+#     - SceneManager: zh/api/SceneManager.md

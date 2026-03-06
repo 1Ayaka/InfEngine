@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documentation - Infernux Engine</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .doc-hub {
+            min-height: 70vh;
+            padding: 80px 20px 60px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .doc-hub h1 { font-size: 2.5rem; margin-bottom: 12px; }
+        .doc-hub .subtitle { font-size: 1.1rem; color: var(--text-secondary); margin-bottom: 40px; }
+        .doc-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+        .doc-card {
+            background: var(--bg-secondary, #1a1a2e);
+            border: 1px solid var(--border-color, #333);
+            border-radius: 12px;
+            padding: 32px 28px;
+            text-decoration: none;
+            color: inherit;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .doc-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        .doc-card .card-icon { font-size: 2.5rem; margin-bottom: 16px; }
+        .doc-card h2 { font-size: 1.4rem; margin-bottom: 8px; }
+        .doc-card p { font-size: 0.95rem; color: var(--text-secondary); line-height: 1.5; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">
+                <span class="logo-icon">🔥</span>
+                <span class="logo-text">Infernux</span>
+            </a>
+            <div class="nav-links">
+                <a href="index.html" data-i18n="nav.home">Home</a>
+                <a href="index.html#features" data-i18n="nav.features">Features</a>
+                <a href="index.html#showcase" data-i18n="nav.showcase">Showcase</a>
+                <a href="roadmap.html" data-i18n="nav.roadmap">Roadmap</a>
+                <a href="wiki/site/en/index.html" data-i18n="nav.wiki">Wiki</a>
+                <a href="wiki/site/en/api/index.html" data-i18n="nav.api">API Reference</a>
+                <a href="https://github.com/ChenlizheMe/InfEngine" target="_blank">
+                    <i class="fab fa-github"></i> GitHub
+                </a>
+            </div>
+            <div class="nav-right">
+                <button class="lang-toggle" onclick="toggleLanguage()">
+                    <span id="lang-text">中文</span>
+                </button>
+                <button class="mobile-menu-btn" onclick="toggleMobileMenu()">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <section class="doc-hub">
+        <h1 data-i18n="wiki.hub.title">Documentation</h1>
+        <p class="subtitle" data-i18n="wiki.hub.desc">Learn how to use Infernux Engine with tutorials, guides, and full API reference.</p>
+        <div class="doc-cards">
+            <a href="wiki/site/en/index.html" class="doc-card">
+                <div class="card-icon">📖</div>
+                <h2 data-i18n="wiki.hub.wiki">Wiki &amp; Tutorials</h2>
+                <p data-i18n="wiki.hub.wiki.desc">Getting started guide, engine architecture overview, component system, editor usage, and more.</p>
+            </a>
+            <a href="wiki/site/en/api/index.html" class="doc-card">
+                <div class="card-icon">📋</div>
+                <h2 data-i18n="wiki.hub.api">API Reference</h2>
+                <p data-i18n="wiki.hub.api.desc">Complete scripting reference for all classes: InfComponent, GameObject, Transform, Camera, RenderGraph, and more.</p>
+            </a>
+            <a href="https://github.com/ChenlizheMe/InfEngine/blob/main/README.md" class="doc-card" target="_blank">
+                <div class="card-icon"><i class="fab fa-github"></i></div>
+                <h2 data-i18n="wiki.hub.readme">README</h2>
+                <p data-i18n="wiki.hub.readme.desc">Quick-start instructions, build guide, and project overview on GitHub.</p>
+            </a>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>© 2024 Lizhe Chen. MIT License.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/i18n.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

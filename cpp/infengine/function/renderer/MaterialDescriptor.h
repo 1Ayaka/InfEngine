@@ -1,0 +1,277 @@
+#pragma once
+
+#include "shader/ShaderProgram.h"
+#include <function/resources/InfMaterial/InfMaterial.h>
+#include <functional>
+#include <glm/glm.hpp>
+#include <memory>
+#include <vector>
+#include <vk_mem_alloc.h>
+#include <vulkan/vulkan.h>
+
+namespace infengine
+{
+
+// Forward declaration
+class InfVkResourceManager;
+
+/**
+ * @brief MaterialUBO - GPU uniform buffer for material properties
+ *
+ * This class manages the GPU-side uniform buffer for material properties.
+ * It automatically maps material property values to the UBO layout
+ * as defined by shader reflection.
+ */
+class MaterialUBO
+{
+  public:
+    MaterialUBO() = default;
+    ~MaterialUBO();
+
+    // Non-copyable
+    MaterialUBO(const MaterialUBO &) = delete;
+    MaterialUBO &operator=(const MaterialUBO &) = delete;
+
+    /**
+     * @brief Create UBO from material layout
+     * @param allocator VMA allocator
+     * @param device Vulkan device
+     * @param layout The UBO layout from shader reflection
+     * @return true if creation succeeded
+     */
+    bool Create(VmaAllocator allocator, VkDevice device, const MaterialUBOLayout &layout);
+
+    /**
+     * @brief Destroy UBO resources
+     */
+    void Destroy();
+
+    /**
+     * @brief Update UBO from material properties
+     * @param material The material containing property values
+     */
+    void Update(const InfMaterial &material);
+
+    /**
+     * @brief Update a specific property in the UBO
+     */
+    void SetFloat(const std::string &name, float value);
+    void SetVec2(const std::string &name, const glm::vec2 &value);
+    void SetVec3(const std::string &name, const glm::vec3 &value);
+    void SetVec4(const std::string &name, const glm::vec4 &value);
+    void SetInt(const std::string &name, int value);
+    void SetMat4(const std::string &name, const glm::mat4 &value);
+
+    /**
+     * @brief Get buffer for binding
+     */
+    [[nodiscard]] VkBuffer GetBuffer() const
+    {
+        return m_buffer;
+    }
+
+    /**
+     * @brief Get buffer size
+     */
+    [[nodiscard]] uint32_t GetSize() const
+    {
+        return m_size;
+    }
+
+    /**
+     * @brief Check if valid
+     */
+    [[nodiscard]] bool IsValid() const
+    {
+        return m_buffer != VK_NULL_HANDLE;
+    }
+
+  private:
+    VmaAllocator m_allocator = VK_NULL_HANDLE;
+    VkDevice m_device = VK_NULL_HANDLE;
+    VkBuffer m_buffer = VK_NULL_HANDLE;
+    VmaAllocation m_allocation = VK_NULL_HANDLE;
+    void *m_mappedData = nullptr;
+    uint32_t m_size = 0;
+
+    MaterialUBOLayout m_layout;
+
+    /**
+     * @brief Write data to a specific offset in the buffer
+     */
+    void WriteData(uint32_t offset, const void *data, uint32_t size);
+};
+
+/**
+ * @brief MaterialDescriptorSet - Per-material descriptor set
+ *
+ * Contains all resources needed for a material:
+ * - Scene UBO (shared)
+ * - Material UBO (per-material)
+ * - Textures (per-material)
+ */
+struct MaterialDescriptorSet
+{
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE; // Track which layout was used to create this set
+    std::unique_ptr<MaterialUBO> materialUBO;
+
+    // Texture bindings (binding -> imageView, sampler)
+    struct TextureBinding
+    {
+        VkImageView imageView = VK_NULL_HANDLE;
+        VkSampler sampler = VK_NULL_HANDLE;
+    };
+    std::unordered_map<uint32_t, TextureBinding> textureBindings;
+
+    bool isValid = false;
+};
+
+/**
+ * @brief Callback type for resolving texture paths to GPU resources
+ *
+ * Given a texture file path (from material Texture2D properties),
+ * returns the VkImageView and VkSampler for that texture.
+ * The callback should handle caching and GPU upload internally.
+ * Returns {VK_NULL_HANDLE, VK_NULL_HANDLE} on failure.
+ */
+using TextureResolver = std::function<std::pair<VkImageView, VkSampler>(const std::string &texturePath)>;
+
+/**
+ * @brief MaterialDescriptorManager - Manages material-specific descriptor sets
+ *
+ * This class handles:
+ * - Creating descriptor sets from shader program layouts
+ * - Managing material UBOs
+ * - Binding textures to materials
+ * - Updating descriptor sets when material properties change
+ */
+class MaterialDescriptorManager
+{
+  public:
+    MaterialDescriptorManager() = default;
+    ~MaterialDescriptorManager();
+
+    // Non-copyable
+    MaterialDescriptorManager(const MaterialDescriptorManager &) = delete;
+    MaterialDescriptorManager &operator=(const MaterialDescriptorManager &) = delete;
+
+    /**
+     * @brief Initialize the manager
+     */
+    void Initialize(VmaAllocator allocator, VkDevice device, VkPhysicalDevice physicalDevice,
+                    uint32_t maxMaterials = 256);
+
+    /**
+     * @brief Shutdown and cleanup
+     */
+    void Shutdown();
+
+    /**
+     * @brief Set a texture resolver callback for loading material textures
+     *
+     * When a material has Texture2D properties, this callback is used to
+     * resolve file paths to VkImageView + VkSampler pairs. If not set,
+     * all texture slots fall back to the default texture.
+     */
+    void SetTextureResolver(TextureResolver resolver)
+    {
+        m_textureResolver = std::move(resolver);
+    }
+
+    /**
+     * @brief Get or create descriptor set for a material
+     * @param material The material
+     * @param program The shader program (for layout info)
+     * @param sceneUBO Scene uniform buffer to bind (binding=0)
+     * @param sceneUBOSize Size of scene UBO
+     * @param lightingUBO Lighting uniform buffer to bind (binding=1)
+     * @param lightingUBOSize Size of lighting UBO
+     * @return Pointer to descriptor set info, or nullptr on failure
+     */
+    MaterialDescriptorSet *GetOrCreateDescriptorSet(const InfMaterial &material, const ShaderProgram &program,
+                                                    VkBuffer sceneUBO, VkDeviceSize sceneUBOSize,
+                                                    VkBuffer lightingUBO = VK_NULL_HANDLE,
+                                                    VkDeviceSize lightingUBOSize = 0);
+
+    /**
+     * @brief Update descriptor set with new material values
+     */
+    void UpdateMaterialUBO(const std::string &materialName, const InfMaterial &material);
+
+    /**
+     * @brief Bind texture to material
+     * @param materialName Material name
+     * @param binding Texture binding slot
+     * @param imageView Texture image view
+     * @param sampler Texture sampler
+     */
+    void BindTexture(const std::string &materialName, uint32_t binding, VkImageView imageView, VkSampler sampler);
+
+    /**
+     * @brief Remove descriptor set for a material
+     */
+    void RemoveDescriptorSet(const std::string &materialName);
+
+    /**
+     * @brief Clear all descriptor sets
+     */
+    void Clear();
+
+    /**
+     * @brief Set default texture for fallback
+     */
+    void SetDefaultTexture(VkImageView imageView, VkSampler sampler);
+
+    /**
+     * @brief Set default normal map texture (flat normal = 0.5, 0.5, 1.0)
+     * Used as fallback for sampler bindings whose name contains "normal"
+     */
+    void SetDefaultNormalTexture(VkImageView imageView, VkSampler sampler);
+
+  private:
+    VmaAllocator m_vmaAllocator = VK_NULL_HANDLE;
+    VkDevice m_device = VK_NULL_HANDLE;
+    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
+    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+
+    std::unordered_map<std::string, std::unique_ptr<MaterialDescriptorSet>> m_descriptorSets;
+
+    // Default texture for fallback
+    VkImageView m_defaultImageView = VK_NULL_HANDLE;
+    VkSampler m_defaultSampler = VK_NULL_HANDLE;
+
+    // Default flat normal map texture for fallback (0.5, 0.5, 1.0 encoded)
+    VkImageView m_defaultNormalImageView = VK_NULL_HANDLE;
+    VkSampler m_defaultNormalSampler = VK_NULL_HANDLE;
+
+  public:
+    /// @brief Get default texture image view (for per-view descriptor fallback)
+    [[nodiscard]] VkImageView GetDefaultImageView() const
+    {
+        return m_defaultImageView;
+    }
+    /// @brief Get default texture sampler (for per-view descriptor fallback)
+    [[nodiscard]] VkSampler GetDefaultSampler() const
+    {
+        return m_defaultSampler;
+    }
+
+  private:
+    // Texture resolver callback (set via SetTextureResolver)
+    TextureResolver m_textureResolver;
+
+    /**
+     * @brief Create descriptor pool
+     */
+    bool CreateDescriptorPool(uint32_t maxMaterials);
+
+    /**
+     * @brief Update descriptor set bindings
+     */
+    void UpdateDescriptorBindings(MaterialDescriptorSet &matDescSet, const ShaderProgram &program, VkBuffer sceneUBO,
+                                  VkDeviceSize sceneUBOSize, VkBuffer lightingUBO = VK_NULL_HANDLE,
+                                  VkDeviceSize lightingUBOSize = 0);
+};
+
+} // namespace infengine

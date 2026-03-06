@@ -1,0 +1,239 @@
+/* ─── Page Setup ─────────────────────────────────────────────────────────── */
+
+.roadmap-page {
+    background-color: var(--bg-dark);
+    min-height: 100vh;
+    padding-bottom: 80px;
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+.rm-header {
+    text-align: center;
+    padding: 60px 20px 40px;
+    background: linear-gradient(180deg, #0d0d18 0%, var(--bg-dark) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    margin-bottom: 40px;
+}
+
+.rm-header h1 {
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: #fff;
+    margin-bottom: 12px;
+    letter-spacing: -0.02em;
+}
+
+.rm-header p {
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+/* ─── Legend ──────────────────────────────────────────────────────────────── */
+
+.rm-legend-container {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-bottom: 50px;
+}
+
+.rm-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.rm-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.rm-status-dot.done { background-color: #52d68a; box-shadow: 0 0 8px rgba(82, 214, 138, 0.4); }
+.rm-status-dot.partial { background-color: #e8a838; box-shadow: 0 0 8px rgba(232, 168, 56, 0.4); }
+.rm-status-dot.planned { background-color: rgba(255, 255, 255, 0.2); }
+
+/* ─── Timeline Structure ──────────────────────────────────────────────────── */
+
+.rm-timeline {
+    position: relative;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+/* Central Line */
+.rm-timeline::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    background: linear-gradient(180deg, rgba(255, 107, 53, 0.8) 0%, rgba(78, 205, 196, 0.2) 100%);
+    border-radius: 2px;
+}
+
+@media (max-width: 768px) {
+    .rm-timeline::before {
+        left: 30px;
+    }
+}
+
+/* ─── Timeline Nodes ──────────────────────────────────────────────────────── */
+
+.rm-node {
+    position: relative;
+    width: 100%;
+    margin-bottom: 60px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    opacity: 0;
+    transform: translateY(20px);
+    animation: fadeUp 0.6s ease forwards;
+}
+
+@keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.rm-node:nth-child(even) { flex-direction: row-reverse; }
+
+@media (max-width: 768px) {
+    .rm-node, .rm-node:nth-child(even) {
+        flex-direction: column;
+        align-items: flex-start;
+        padding-left: 60px;
+    }
+}
+
+/* Center Marker */
+.rm-marker {
+    position: absolute;
+    left: 50%;
+    top: 15px;
+    transform: translateX(-50%);
+    width: 44px;
+    height: 44px;
+    background-color: var(--bg-dark);
+    border: 2px solid var(--primary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    z-index: 2;
+    box-shadow: 0 0 15px rgba(255, 107, 53, 0.2);
+}
+
+@media (max-width: 768px) {
+    .rm-marker {
+        left: 30px;
+    }
+}
+
+/* ─── Cards ───────────────────────────────────────────────────────────────── */
+
+.rm-content {
+    width: calc(50% - 60px);
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 24px;
+    position: relative;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.rm-content:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+@media (max-width: 768px) {
+    .rm-content {
+        width: 100%;
+        margin-top: 10px;
+    }
+}
+
+/* Card Arrow (Desktop only) */
+.rm-node:nth-child(odd) .rm-content::after {
+    content: ""; position: absolute; top: 25px; right: -8px;
+    width: 16px; height: 16px; background: var(--bg-card);
+    transform: rotate(45deg); border-top: 1px solid rgba(255, 255, 255, 0.05); border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.rm-node:nth-child(even) .rm-content::after {
+    content: ""; position: absolute; top: 25px; left: -8px;
+    width: 16px; height: 16px; background: var(--bg-card);
+    transform: rotate(45deg); border-bottom: 1px solid rgba(255, 255, 255, 0.05); border-left: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+@media (max-width: 768px) {
+    .rm-node:nth-child(odd) .rm-content::after,
+    .rm-node:nth-child(even) .rm-content::after { display: none; }
+}
+
+/* Card Header */
+.rm-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 12px;
+}
+
+.rm-title-icon { width: 24px; text-align: center; }
+
+/* ─── Task Grid ───────────────────────────────────────────────────────────── */
+
+.rm-tasks {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.rm-task-item {
+    background: var(--bg-elevated);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: background 0.2s;
+}
+
+.rm-task-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.rm-task-name {
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    font-weight: 500;
+    flex: 1;
+}
+
+.rm-task-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.rm-task-status.done { background-color: #52d68a; box-shadow: 0 0 6px #52d68a; }
+.rm-task-status.partial { background-color: #e8a838; box-shadow: 0 0 6px #e8a838; }
+.rm-task-status.planned { background-color: rgba(255, 255, 255, 0.15); }
