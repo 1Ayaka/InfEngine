@@ -231,10 +231,8 @@ class PhysicsWorld
                     bool queryTriggers = true) const;
 
     /// Cast a box along a direction. Returns closest RaycastHit or empty.
-    bool BoxCast(const glm::vec3 &center, const glm::vec3 &halfExtents, const glm::vec3 &direction,
-                 float maxDistance, RaycastHit &outHit,
-                 uint32_t layerMask = (0xFFFFFFFFu & ~(1u << 2)),
-                 bool queryTriggers = true) const;
+    bool BoxCast(const glm::vec3 &center, const glm::vec3 &halfExtents, const glm::vec3 &direction, float maxDistance,
+                 RaycastHit &outHit, uint32_t layerMask = (0xFFFFFFFFu & ~(1u << 2)), bool queryTriggers = true) const;
 
     // ========================================================================
     // Lookup

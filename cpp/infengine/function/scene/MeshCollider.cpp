@@ -81,23 +81,14 @@ bool MeshCollider::CollectMeshGeometry(std::vector<glm::vec3> &outVertices, std:
     glm::vec3 maxScaled(boundsMax.x * scale.x, boundsMax.y * scale.y, boundsMax.z * scale.z);
 
     outVertices = {
-        {minScaled.x, minScaled.y, minScaled.z},
-        {maxScaled.x, minScaled.y, minScaled.z},
-        {maxScaled.x, maxScaled.y, minScaled.z},
-        {minScaled.x, maxScaled.y, minScaled.z},
-        {minScaled.x, minScaled.y, maxScaled.z},
-        {maxScaled.x, minScaled.y, maxScaled.z},
-        {maxScaled.x, maxScaled.y, maxScaled.z},
-        {minScaled.x, maxScaled.y, maxScaled.z},
+        {minScaled.x, minScaled.y, minScaled.z}, {maxScaled.x, minScaled.y, minScaled.z},
+        {maxScaled.x, maxScaled.y, minScaled.z}, {minScaled.x, maxScaled.y, minScaled.z},
+        {minScaled.x, minScaled.y, maxScaled.z}, {maxScaled.x, minScaled.y, maxScaled.z},
+        {maxScaled.x, maxScaled.y, maxScaled.z}, {minScaled.x, maxScaled.y, maxScaled.z},
     };
 
     outIndices = {
-        0, 1, 2, 0, 2, 3,
-        4, 6, 5, 4, 7, 6,
-        0, 4, 5, 0, 5, 1,
-        3, 2, 6, 3, 6, 7,
-        1, 5, 6, 1, 6, 2,
-        0, 3, 7, 0, 7, 4,
+        0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 3, 2, 6, 3, 6, 7, 1, 5, 6, 1, 6, 2, 0, 3, 7, 0, 7, 4,
     };
     return true;
 }
@@ -110,7 +101,8 @@ void *MeshCollider::CreateJoltShapeRaw() const
         JPH::Shape *fallback = new JPH::BoxShape(JPH::Vec3(0.5f, 0.5f, 0.5f));
         glm::vec3 center = GetCenter();
         if (center != glm::vec3(0.0f)) {
-            fallback = new JPH::RotatedTranslatedShape(JPH::Vec3(center.x, center.y, center.z), JPH::Quat::sIdentity(), fallback);
+            fallback = new JPH::RotatedTranslatedShape(JPH::Vec3(center.x, center.y, center.z), JPH::Quat::sIdentity(),
+                                                       fallback);
         }
         return fallback;
     }

@@ -884,15 +884,13 @@ void SceneRenderGraph::BuildRenderGraph()
                         uint32_t resolveH = height;
 
                         m_renderGraph->AddTransferPass(
-                            "__MSAA_resolve_pre_fs",
-                            [importedColor, importedResolve, resolveW, resolveH, msaaImage,
-                             resolveImage](vk::PassBuilder &builder) {
+                            "__MSAA_resolve_pre_fs", [importedColor, importedResolve, resolveW, resolveH, msaaImage,
+                                                      resolveImage](vk::PassBuilder &builder) {
                                 builder.TransferRead(importedColor);
                                 builder.TransferWrite(importedResolve);
                                 builder.SetRenderArea(resolveW, resolveH);
 
-                                return [msaaImage, resolveImage, resolveW,
-                                        resolveH](vk::RenderContext &ctx) {
+                                return [msaaImage, resolveImage, resolveW, resolveH](vk::RenderContext &ctx) {
                                     VkImageResolve region{};
                                     region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
                                     region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -964,62 +962,60 @@ void SceneRenderGraph::BuildRenderGraph()
                     }
                 }
 
-                m_renderGraph->AddPass(
-                    passDesc.name, [=](vk::PassBuilder &builder) {
-                        // Declare read dependencies for DAG edges + barriers
+                m_renderGraph->AddPass(passDesc.name, [=](vk::PassBuilder &builder) {
+                    // Declare read dependencies for DAG edges + barriers
+                    for (const auto &readHandle : fsReadHandles) {
+                        builder.Read(readHandle);
+                    }
+                    // Declare color output
+                    builder.WriteColor(fsOutputTarget, 0);
+                    builder.SetRenderArea(fsPassWidth, fsPassHeight);
+
+                    return [=](vk::RenderContext &ctx) {
+                        // Get the VkRenderPass for pipeline creation (available post-Compile)
+                        VkRenderPass rp = renderGraphPtr->GetPassRenderPass(capturedPassName);
+                        if (rp == VK_NULL_HANDLE)
+                            return;
+
+                        // Resolve input texture views
+                        std::vector<VkImageView> inputViews;
                         for (const auto &readHandle : fsReadHandles) {
-                            builder.Read(readHandle);
+                            VkImageView view = ctx.GetTexture(readHandle);
+                            if (view != VK_NULL_HANDLE) {
+                                inputViews.push_back(view);
+                            }
                         }
-                        // Declare color output
-                        builder.WriteColor(fsOutputTarget, 0);
-                        builder.SetRenderArea(fsPassWidth, fsPassHeight);
 
-                        return [=](vk::RenderContext &ctx) {
-                            // Get the VkRenderPass for pipeline creation (available post-Compile)
-                            VkRenderPass rp = renderGraphPtr->GetPassRenderPass(capturedPassName);
-                            if (rp == VK_NULL_HANDLE)
-                                return;
+                        // Build pipeline key and ensure pipeline exists
+                        FullscreenPipelineKey key;
+                        key.shaderName = shaderName;
+                        key.renderPass = rp;
+                        key.samples = fsSamples;
+                        key.colorFormat = fsColorFormat;
+                        key.inputTextureCount = static_cast<uint32_t>(inputViews.size());
 
-                            // Resolve input texture views
-                            std::vector<VkImageView> inputViews;
-                            for (const auto &readHandle : fsReadHandles) {
-                                VkImageView view = ctx.GetTexture(readHandle);
-                                if (view != VK_NULL_HANDLE) {
-                                    inputViews.push_back(view);
-                                }
+                        const auto &entry = fsRenderer->EnsurePipeline(key);
+                        if (entry.pipeline == VK_NULL_HANDLE)
+                            return;
+
+                        // Allocate descriptor set for input textures
+                        VkDescriptorSet descSet = fsRenderer->AllocateDescriptorSet(entry.descSetLayout, inputViews,
+                                                                                    fsRenderer->GetLinearSampler());
+
+                        // Pack push constants from Python graph description
+                        FullscreenPushConstants pc{};
+                        uint32_t pcSize = 0;
+                        for (const auto &[name, value] : pushConstantsVec) {
+                            if (pcSize / sizeof(float) < 32) {
+                                pc.values[pcSize / sizeof(float)] = value;
+                                pcSize += sizeof(float);
                             }
+                        }
 
-                            // Build pipeline key and ensure pipeline exists
-                            FullscreenPipelineKey key;
-                            key.shaderName = shaderName;
-                            key.renderPass = rp;
-                            key.samples = fsSamples;
-                            key.colorFormat = fsColorFormat;
-                            key.inputTextureCount = static_cast<uint32_t>(inputViews.size());
-
-                            const auto &entry = fsRenderer->EnsurePipeline(key);
-                            if (entry.pipeline == VK_NULL_HANDLE)
-                                return;
-
-                            // Allocate descriptor set for input textures
-                            VkDescriptorSet descSet = fsRenderer->AllocateDescriptorSet(
-                                entry.descSetLayout, inputViews, fsRenderer->GetLinearSampler());
-
-                            // Pack push constants from Python graph description
-                            FullscreenPushConstants pc{};
-                            uint32_t pcSize = 0;
-                            for (const auto &[name, value] : pushConstantsVec) {
-                                if (pcSize / sizeof(float) < 32) {
-                                    pc.values[pcSize / sizeof(float)] = value;
-                                    pcSize += sizeof(float);
-                                }
-                            }
-
-                            // Draw fullscreen triangle
-                            fsRenderer->Draw(ctx.GetCommandBuffer(), entry, descSet, pc, pcSize, fsPassWidth,
-                                             fsPassHeight);
-                        };
-                    });
+                        // Draw fullscreen triangle
+                        fsRenderer->Draw(ctx.GetCommandBuffer(), entry, descSet, pc, pcSize, fsPassWidth, fsPassHeight);
+                    };
+                });
                 continue;
             }
 

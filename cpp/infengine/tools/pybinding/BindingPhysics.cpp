@@ -19,9 +19,9 @@
 #include "function/scene/MeshCollider.h"
 #include "function/scene/Rigidbody.h"
 #include "function/scene/SphereCollider.h"
+#include "function/scene/TagLayerManager.h"
 #include "function/scene/physics/PhysicsContactListener.h"
 #include "function/scene/physics/PhysicsWorld.h"
-#include "function/scene/TagLayerManager.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -218,7 +218,7 @@ void RegisterPhysicsBindings(py::module_ &m)
         .def_property("collision_detection_mode", &Rigidbody::GetCollisionDetectionMode,
                       &Rigidbody::SetCollisionDetectionMode, "Collision detection mode (0=Discrete, 1=Continuous, ...)")
         .def_property("interpolation", &Rigidbody::GetInterpolation, &Rigidbody::SetInterpolation,
-                  "Presentation interpolation mode (0=None, 1=Interpolate)")
+                      "Presentation interpolation mode (0=None, 1=Interpolate)")
         .def_property("max_angular_velocity", &Rigidbody::GetMaxAngularVelocity, &Rigidbody::SetMaxAngularVelocity,
                       "Maximum angular velocity in rad/s (default 7)")
         .def_property("max_linear_velocity", &Rigidbody::GetMaxLinearVelocity, &Rigidbody::SetMaxLinearVelocity,
@@ -296,24 +296,23 @@ void RegisterPhysicsBindings(py::module_ &m)
             [](const glm::vec3 &center, float radius, uint32_t layerMask, bool queryTriggers) {
                 return PhysicsWorld::Instance().OverlapSphere(center, radius, layerMask, queryTriggers);
             },
-            "center"_a, "radius"_a, "layer_mask"_a = (0xFFFFFFFFu & ~(1u << 2)),
-            "query_triggers"_a = true,
+            "center"_a, "radius"_a, "layer_mask"_a = (0xFFFFFFFFu & ~(1u << 2)), "query_triggers"_a = true,
             "Find all colliders within a sphere. Returns list of Collider.")
         .def_static(
             "overlap_box",
             [](const glm::vec3 &center, const glm::vec3 &half_extents, uint32_t layerMask, bool queryTriggers) {
                 return PhysicsWorld::Instance().OverlapBox(center, half_extents, layerMask, queryTriggers);
             },
-            "center"_a, "half_extents"_a, "layer_mask"_a = (0xFFFFFFFFu & ~(1u << 2)),
-            "query_triggers"_a = true,
+            "center"_a, "half_extents"_a, "layer_mask"_a = (0xFFFFFFFFu & ~(1u << 2)), "query_triggers"_a = true,
             "Find all colliders within an axis-aligned box. Returns list of Collider.")
         // ---- Shape casts ----
         .def_static(
             "sphere_cast",
-            [](const glm::vec3 &origin, float radius, const glm::vec3 &direction, float maxDistance,
-               uint32_t layerMask, bool queryTriggers) -> py::object {
+            [](const glm::vec3 &origin, float radius, const glm::vec3 &direction, float maxDistance, uint32_t layerMask,
+               bool queryTriggers) -> py::object {
                 RaycastHit hit;
-                if (PhysicsWorld::Instance().SphereCast(origin, radius, direction, maxDistance, hit, layerMask, queryTriggers))
+                if (PhysicsWorld::Instance().SphereCast(origin, radius, direction, maxDistance, hit, layerMask,
+                                                        queryTriggers))
                     return py::cast(hit);
                 return py::none();
             },
@@ -322,10 +321,11 @@ void RegisterPhysicsBindings(py::module_ &m)
             "Cast a sphere and return closest RaycastHit or None.")
         .def_static(
             "box_cast",
-            [](const glm::vec3 &center, const glm::vec3 &half_extents, const glm::vec3 &direction,
-               float maxDistance, uint32_t layerMask, bool queryTriggers) -> py::object {
+            [](const glm::vec3 &center, const glm::vec3 &half_extents, const glm::vec3 &direction, float maxDistance,
+               uint32_t layerMask, bool queryTriggers) -> py::object {
                 RaycastHit hit;
-                if (PhysicsWorld::Instance().BoxCast(center, half_extents, direction, maxDistance, hit, layerMask, queryTriggers))
+                if (PhysicsWorld::Instance().BoxCast(center, half_extents, direction, maxDistance, hit, layerMask,
+                                                     queryTriggers))
                     return py::cast(hit);
                 return py::none();
             },
@@ -337,7 +337,8 @@ void RegisterPhysicsBindings(py::module_ &m)
             "get_gravity",
             []() -> glm::vec3 {
                 auto *sys = PhysicsWorld::Instance().GetJoltSystem();
-                if (!sys) return glm::vec3(0.0f, -9.81f, 0.0f);
+                if (!sys)
+                    return glm::vec3(0.0f, -9.81f, 0.0f);
                 JPH::Vec3 g = sys->GetGravity();
                 return glm::vec3(g.GetX(), g.GetY(), g.GetZ());
             },
@@ -346,7 +347,8 @@ void RegisterPhysicsBindings(py::module_ &m)
             "set_gravity",
             [](const glm::vec3 &g) {
                 auto *sys = PhysicsWorld::Instance().GetJoltSystem();
-                if (sys) sys->SetGravity(JPH::Vec3(g.x, g.y, g.z));
+                if (sys)
+                    sys->SetGravity(JPH::Vec3(g.x, g.y, g.z));
             },
             "gravity"_a, "Set the global gravity vector.")
         // ---- Ignore layer collision ----
@@ -355,15 +357,13 @@ void RegisterPhysicsBindings(py::module_ &m)
             [](int layer1, int layer2, bool ignore) {
                 TagLayerManager::Instance().SetLayersCollide(layer1, layer2, !ignore);
             },
-            "layer1"_a, "layer2"_a, "ignore"_a = true,
-            "Set whether two layers should ignore collisions.")
+            "layer1"_a, "layer2"_a, "ignore"_a = true, "Set whether two layers should ignore collisions.")
         .def_static(
             "get_ignore_layer_collision",
             [](int layer1, int layer2) -> bool {
                 return !TagLayerManager::Instance().GetLayersCollide(layer1, layer2);
             },
-            "layer1"_a, "layer2"_a,
-            "Check if two layers ignore collisions.");
+            "layer1"_a, "layer2"_a, "Check if two layers ignore collisions.");
 
     // ====================================================================
     // Register component type casters in ComponentBindingRegistry

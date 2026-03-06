@@ -1180,13 +1180,13 @@ void RegisterSceneBindings(py::module_ &m)
         .def("stop", &SceneManager::Stop, "Stop play mode")
         .def("pause", &SceneManager::Pause, "Pause play mode")
         .def("is_paused", &SceneManager::IsPaused, "Check if paused")
-           .def("get_fixed_time_step", &SceneManager::GetFixedTimeStep, "Get the fixed physics timestep in seconds")
-           .def("set_fixed_time_step", &SceneManager::SetFixedTimeStep, py::arg("value"),
-               "Set the fixed physics timestep in seconds")
-           .def("get_max_fixed_delta_time", &SceneManager::GetMaxFixedDeltaTime,
-               "Get the max clamped frame delta used by the fixed-step accumulator")
-           .def("set_max_fixed_delta_time", &SceneManager::SetMaxFixedDeltaTime, py::arg("value"),
-               "Set the max clamped frame delta used by the fixed-step accumulator")
+        .def("get_fixed_time_step", &SceneManager::GetFixedTimeStep, "Get the fixed physics timestep in seconds")
+        .def("set_fixed_time_step", &SceneManager::SetFixedTimeStep, py::arg("value"),
+             "Set the fixed physics timestep in seconds")
+        .def("get_max_fixed_delta_time", &SceneManager::GetMaxFixedDeltaTime,
+             "Get the max clamped frame delta used by the fixed-step accumulator")
+        .def("set_max_fixed_delta_time", &SceneManager::SetMaxFixedDeltaTime, py::arg("value"),
+             "Set the max clamped frame delta used by the fixed-step accumulator")
         .def("step", &SceneManager::Step, py::arg("delta_time") = 0.016f,
              "Execute one frame while paused (Update + LateUpdate + EndFrame). No-op if not paused.")
         .def("dont_destroy_on_load", &SceneManager::DontDestroyOnLoad, py::arg("game_object"),

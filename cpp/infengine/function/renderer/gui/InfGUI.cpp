@@ -2,9 +2,9 @@
 #include "InfGUIContext.h"
 
 #include <SDL3/SDL.h>
+#include <algorithm>
 #include <backends/imgui_impl_sdl3.h>
 #include <backends/imgui_impl_vulkan.h>
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <core/log/InfLog.h>

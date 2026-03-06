@@ -157,9 +157,9 @@ FullscreenPipelineEntry FullscreenRenderer::CreatePipeline(const FullscreenPipel
     VkShaderModule fragModule = m_vkCore->GetShaderModule(key.shaderName, "fragment");
 
     if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE) {
-        INFLOG_ERROR("FullscreenRenderer: Missing shader modules for '", key.shaderName, "' (vert=",
-                     (vertModule != VK_NULL_HANDLE ? "OK" : "MISSING"), ", frag=",
-                     (fragModule != VK_NULL_HANDLE ? "OK" : "MISSING"), ")");
+        INFLOG_ERROR("FullscreenRenderer: Missing shader modules for '", key.shaderName,
+                     "' (vert=", (vertModule != VK_NULL_HANDLE ? "OK" : "MISSING"),
+                     ", frag=", (fragModule != VK_NULL_HANDLE ? "OK" : "MISSING"), ")");
         vkDestroyPipelineLayout(m_device, pipeLayout, nullptr);
         vkDestroyDescriptorSetLayout(m_device, descSetLayout, nullptr);
         entry.layout = VK_NULL_HANDLE;
@@ -282,8 +282,7 @@ void FullscreenRenderer::ResetPool()
 // ============================================================================
 
 VkDescriptorSet FullscreenRenderer::AllocateDescriptorSet(VkDescriptorSetLayout layout,
-                                                          const std::vector<VkImageView> &inputViews,
-                                                          VkSampler sampler)
+                                                          const std::vector<VkImageView> &inputViews, VkSampler sampler)
 {
     if (m_descriptorPool == VK_NULL_HANDLE || layout == VK_NULL_HANDLE)
         return VK_NULL_HANDLE;

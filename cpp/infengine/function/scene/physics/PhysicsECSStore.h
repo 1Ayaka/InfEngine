@@ -35,8 +35,8 @@ struct ColliderECSData
     // ---- Properties ----
     bool isTrigger = false;
     glm::vec3 center{0.0f};
-    float friction = 0.4f;      ///< Dynamic friction [0..1] (Jolt default 0.2, Unity default 0.4)
-    float bounciness = 0.0f;    ///< Restitution / bounciness [0..1]
+    float friction = 0.4f;   ///< Dynamic friction [0..1] (Jolt default 0.2, Unity default 0.4)
+    float bounciness = 0.0f; ///< Restitution / bounciness [0..1]
 
     // ---- Cached sync state (avoids per-frame Jolt reads) ----
     glm::vec3 lastSyncedPos{0.0f};
@@ -103,7 +103,7 @@ class PhysicsECSStore
     const ColliderECSData &GetCollider(ColliderHandle handle) const;
     [[nodiscard]] std::vector<ColliderHandle> GetAliveColliderHandles() const
     {
-      return m_colliderPool.GetAliveHandles();
+        return m_colliderPool.GetAliveHandles();
     }
 
     // ---- Rigidbody pool ----
@@ -114,7 +114,7 @@ class PhysicsECSStore
     const RigidbodyECSData &GetRigidbody(RigidbodyHandle handle) const;
     [[nodiscard]] std::vector<RigidbodyHandle> GetAliveRigidbodyHandles() const
     {
-      return m_rigidbodyPool.GetAliveHandles();
+        return m_rigidbodyPool.GetAliveHandles();
     }
 
   private:
