@@ -283,7 +283,7 @@ if __name__ == "__main__":
 
             # Try to instantiate
             instance = create_component_instance(comp_class)
-            print(f"    ✓ Instantiation successful")
+            print(f"    [OK] Instantiation successful")
 
     else:
         print("Usage: python script_loader.py <path_to_script.py>")

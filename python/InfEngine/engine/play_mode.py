@@ -272,7 +272,7 @@ class PlayModeManager:
             scene_manager = self._get_scene_manager()
             if scene_manager:
                 scene_manager.play()
-            Debug.log_internal("✓ Play Mode started (C++ lifecycle update path)")
+            Debug.log_internal("[OK] Play Mode started (C++ lifecycle update path)")
 
         def on_done(ok):
             from InfEngine.engine.ui.engine_status import EngineStatus
@@ -373,7 +373,7 @@ class PlayModeManager:
                     else:
                         sfm.clear_dirty()
             self._notify_state_change(old_state, PlayModeState.EDIT)
-            Debug.log_internal("✓ Returned to Edit Mode (scene restored)")
+            Debug.log_internal("[OK] Returned to Edit Mode (scene restored)")
 
         def on_done(ok):
             from InfEngine.engine.ui.engine_status import EngineStatus

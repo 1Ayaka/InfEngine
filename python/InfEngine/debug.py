@@ -51,13 +51,13 @@ class LogEntry:
     def get_icon(self) -> str:
         """Get icon/prefix for the log type."""
         icons = {
-            LogType.LOG: "ℹ",
-            LogType.WARNING: "⚠",
-            LogType.ERROR: "✗",
-            LogType.ASSERT: "❌",
-            LogType.EXCEPTION: "💥",
+            LogType.LOG: "[I]",
+            LogType.WARNING: "[W]",
+            LogType.ERROR: "[E]",
+            LogType.ASSERT: "[A]",
+            LogType.EXCEPTION: "[!]",
         }
-        return icons.get(self.log_type, "•")
+        return icons.get(self.log_type, "-")
 
 
 def _sanitize_text(value: Any) -> str:

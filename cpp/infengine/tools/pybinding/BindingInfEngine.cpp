@@ -371,6 +371,22 @@ PYBIND11_MODULE(_InfEngine, m)
                     r->SetWindowTitle(title);
             },
             py::arg("title"), "Set the window title bar text")
+        .def(
+            "set_maximized",
+            [](InfEngine &self, bool maximized) {
+                auto *r = self.GetRenderer();
+                if (r)
+                    r->SetWindowMaximized(maximized);
+            },
+            py::arg("maximized"), "Maximize or restore the window")
+        .def(
+            "set_resizable",
+            [](InfEngine &self, bool resizable) {
+                auto *r = self.GetRenderer();
+                if (r)
+                    r->SetWindowResizable(resizable);
+            },
+            py::arg("resizable"), "Set whether the window is resizable")
         .def("modify_resources", &InfEngine::ModifyResources, py::arg("file_path"))
         .def("delete_resources", &InfEngine::DeleteResources, py::arg("file_path"))
         .def("move_resources", &InfEngine::MoveResources, py::arg("old_file_path"), py::arg("new_file_path"))

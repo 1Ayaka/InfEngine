@@ -903,6 +903,20 @@ void InfRenderer::SetWindowTitle(const std::string &title)
     }
 }
 
+void InfRenderer::SetWindowMaximized(bool maximized)
+{
+    if (m_view) {
+        m_view->SetWindowMaximized(maximized);
+    }
+}
+
+void InfRenderer::SetWindowResizable(bool resizable)
+{
+    if (m_view) {
+        m_view->SetWindowResizable(resizable);
+    }
+}
+
 bool InfRenderer::IsCloseRequested() const
 {
     return m_view && m_view->IsCloseRequested();

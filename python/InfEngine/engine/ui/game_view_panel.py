@@ -283,8 +283,10 @@ class GameViewPanel(EditorPanel):
 
         ctx.same_line(0, 12)
         pct = int(round(self._display_scale * 100))
+        scale_label_x = ctx.get_cursor_pos_x()
+        scale_label_w, _ = ctx.calc_text_size("200%")
         ctx.label(f"{pct}%")
-        ctx.same_line(0, 4)
+        ctx.same_line(scale_label_x + scale_label_w + 4.0)
         ctx.set_next_item_width(100)
         old_scale = self._display_scale
         self._display_scale = ctx.float_slider("##Scale", self._display_scale, 0.10, 2.0)

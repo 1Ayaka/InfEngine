@@ -14,8 +14,8 @@ Change colors and sizes here to restyle the entire editor.
     3. Theme 类 — 所有颜色 / 尺寸 / 图标 / 布局常量
     4. 样式推入辅助方法 — push/pop 便捷方法
 
-所有颜色为 **线性空间 RGBA 元组** (float, 0-1)。
-All colors are **linear-space RGBA tuples** (float, 0-1).
+所有颜色为 **sRGB 空间 RGBA 元组** (float, 0-1)。
+All colors are **sRGB-space RGBA tuples** (float, 0-1).
 
 用法 / Usage::
 
@@ -230,9 +230,9 @@ class ImGuiStyleVar:
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  3. Theme — 编辑器主题配置 / Editor Theme Configuration                 ║
 # ║                                                                         ║
-# ║  修改以下值即可改变整个编辑器外观。所有颜色为线性空间 RGBA。                  ║
+# ║  修改以下值即可改变整个编辑器外观。所有颜色为 sRGB 空间 RGBA。                  ║
 # ║  Modify values below to restyle the entire editor.                      ║
-# ║  All colors are linear-space RGBA.                                      ║
+# ║  All colors are sRGB-space RGBA (UNORM swapchain, no hw conversion).    ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 class Theme:
@@ -246,78 +246,79 @@ class Theme:
     """
 
     # ══════════════════════════════════════════════════════════════════════
-    #  基础调色板 / Base Palette (NASA Punk dark theme)
-    #  深空黑底 + 电光青色强调 / Deep space blacks + electric cyan accent
+    #  基础调色板 / Base Palette (Unity-style neutral dark theme)
+    #  中性灰底 + 红色强调 / Neutral grays + red accent (#EB5757)
     # ══════════════════════════════════════════════════════════════════════
 
     # -- 文本颜色 / Text Colors ------------------------------------------------
-    TEXT              : RGBA = (0.84,  0.84,  0.87,  1.0)   # 主文本 / Primary text (subtle blue tint)
-    TEXT_DISABLED     : RGBA = (0.40,  0.40,  0.44,  1.0)   # 禁用文本 / Disabled text
-    TEXT_DIM          : RGBA = (0.55,  0.55,  0.58,  1.0)   # 次要文本 / Secondary/dim text
+    TEXT              : RGBA = (0.84,  0.84,  0.84,  1.0)   # 主文本 / Primary text (neutral light gray)
+    TEXT_DISABLED     : RGBA = (0.40,  0.40,  0.40,  1.0)   # 禁用文本 / Disabled text
+    TEXT_DIM          : RGBA = (0.55,  0.55,  0.55,  1.0)   # 次要文本 / Secondary/dim text
 
     # -- 背景颜色 / Background Colors -------------------------------------------
-    WINDOW_BG         : RGBA = srgb3(0.10, 0.10, 0.13)      # 窗口背景 / Window background (blue-tinted space black)
+    WINDOW_BG         : RGBA = (0.22,  0.22,  0.22,  1.0)   # 窗口背景 / Window background (Unity #383838)
     CHILD_BG          : RGBA = (0.0, 0.0, 0.0, 0.0)         # 子窗口背景 / Child window bg (transparent)
-    POPUP_BG          : RGBA = srgb3(0.11, 0.11, 0.14, 0.96) # 弹出窗口背景 / Popup background
-    STATUS_BAR_BG     : RGBA = srgb3(0.06, 0.06, 0.08)      # 状态栏背景 / Status bar background (deep space)
+    POPUP_BG          : RGBA = (0.24,  0.24,  0.24,  0.96)  # 弹出窗口背景 / Popup background (Unity #3E3E3E)
+    MENU_BAR_BG       : RGBA = (0.16,  0.16,  0.16,  1.0)   # 菜单栏背景 / Menu bar background (#292929)
+    STATUS_BAR_BG     : RGBA = (0.13,  0.13,  0.13,  1.0)   # 状态栏背景 / Status bar background (Unity #212121)
 
     # -- 边框颜色 / Border Colors ------------------------------------------------
-    BORDER            : RGBA = srgb3(0.17, 0.17, 0.22)      # 标准边框 / Standard border (steel-blue)
+    BORDER            : RGBA = (0.10,  0.10,  0.10,  1.0)   # 标准边框 / Standard border (Unity #1A1A1A)
     BORDER_TRANSPARENT: RGBA = (0.0, 0.0, 0.0, 0.0)         # 透明边框 / Transparent border
     BORDER_SHADOW     : RGBA = (0.0, 0.0, 0.0, 0.0)         # 边框阴影 / Border shadow
 
     # -- 输入框/滑块背景 / Frame Colors (input fields, sliders) ------------------
-    FRAME_BG          : RGBA = srgb3(0.12, 0.12, 0.16)      # 默认背景 / Default background (blue-tinted)
-    FRAME_BG_HOVERED  : RGBA = srgb3(0.15, 0.15, 0.19)      # 悬停时 / On hover
-    FRAME_BG_ACTIVE   : RGBA = srgb3(0.13, 0.18, 0.21)      # 激活时 / On active (cyan tint)
+    FRAME_BG          : RGBA = (0.165, 0.165, 0.165, 1.0)   # 默认背景 / Default background (Unity #2A2A2A)
+    FRAME_BG_HOVERED  : RGBA = (0.20,  0.20,  0.20,  1.0)   # 悬停时 / On hover
+    FRAME_BG_ACTIVE   : RGBA = (0.24,  0.17,  0.17,  1.0)   # 激活时 / On active (red tint)
 
     # ══════════════════════════════════════════════════════════════════════
     #  按钮颜色 / Button Colors
     # ══════════════════════════════════════════════════════════════════════
 
     # -- 标准按钮 / Regular Button -----------------------------------------------
-    BTN_NORMAL        : RGBA = srgb3(0.14, 0.14, 0.18)      # 默认 / Normal (steel dark)
-    BTN_HOVERED       : RGBA = srgb3(0.16, 0.20, 0.23)      # 悬停 / Hovered (cyan tint)
-    BTN_ACTIVE        : RGBA = hex_to_linear(0x00, 0xBC, 0xD4) # 按下 / Active (electric cyan)
+    BTN_NORMAL        : RGBA = (0.25,  0.25,  0.25,  1.0)   # 默认 / Normal (Unity #404040)
+    BTN_HOVERED       : RGBA = (0.30,  0.25,  0.25,  1.0)   # 悬停 / Hovered (red tint)
+    BTN_ACTIVE        : RGBA = (0.35,  0.22,  0.22,  1.0)   # 按下 / Active (deeper red)
 
     # -- 幽灵按钮 / Ghost Button (透明背景，用于工具栏和状态栏)
     #    Transparent background, used in toolbar and status bar
     BTN_GHOST         : RGBA = (0.0, 0.0, 0.0, 0.0)         # 透明 / Transparent
-    BTN_GHOST_HOVERED : RGBA = srgb3(0.14, 0.18, 0.21)      # 悬停 / Hovered (cyan warmth)
-    BTN_GHOST_ACTIVE  : RGBA = srgb3(0.16, 0.21, 0.24)      # 按下 / Active (deeper cyan)
+    BTN_GHOST_HOVERED : RGBA = (0.28, 0.23, 0.23, 1.0)      # 悬停 / Hovered (red warmth)
+    BTN_GHOST_ACTIVE  : RGBA = (0.32, 0.25, 0.25, 1.0)      # 按下 / Active (deeper red)
 
     # -- 状态栏幽灵按钮 / Status Bar Ghost Button (略有不同的悬停色)
-    BTN_SB_HOVERED    : RGBA = srgb3(0.12, 0.16, 0.18)      # 悬停 / Hovered (subtle cyan)
-    BTN_SB_ACTIVE     : RGBA = srgb3(0.14, 0.18, 0.21)      # 按下 / Active
+    BTN_SB_HOVERED    : RGBA = (0.20, 0.18, 0.18, 1.0)      # 悬停 / Hovered (subtle red)
+    BTN_SB_ACTIVE     : RGBA = (0.24, 0.20, 0.20, 1.0)      # 按下 / Active
 
     # -- 选中高亮 / Selection Highlight (用于项目面板等)
-    BTN_SELECTED      : RGBA = srgb3(0.14, 0.20, 0.24)      # 选中态 / Selected state (cyan highlight)
-    BTN_SUBTLE_HOVER  : RGBA = (0.12, 0.14, 0.17, 1.0)      # 微妙悬停 / Subtle hover on icons
+    BTN_SELECTED      : RGBA = (0.922, 0.341, 0.341, 0.55)  # 选中态 / Selected state (theme red, semi-transparent overlay)
+    BTN_SUBTLE_HOVER  : RGBA = (0.20, 0.18, 0.18, 1.0)      # 微妙悬停 / Subtle hover on icons
 
     # -- 工具栏播放按钮 / Toolbar Play-Mode Buttons
     PLAY_ACTIVE       : RGBA = (0.20, 0.45, 0.30, 1.0)      # 播放中(绿色) / Playing (green tint)
     PAUSE_ACTIVE      : RGBA = (0.50, 0.40, 0.15, 1.0)      # 暂停中(琥珀) / Paused (amber tint)
-    BTN_IDLE          : RGBA = (0.12, 0.12, 0.15, 1.0)   # 空闲态 / Idle state (steel dark)
-    BTN_DISABLED      : RGBA = (0.10, 0.10, 0.10, 0.4)      # 禁用态 / Disabled state
+    BTN_IDLE          : RGBA = (0.18, 0.18, 0.18, 1.0)      # 空闲态 / Idle state (neutral dark)
+    BTN_DISABLED      : RGBA = (0.15, 0.15, 0.15, 0.4)      # 禁用态 / Disabled state
 
     # -- 强调按钮 / Accent Button
-    APPLY_BUTTON      : RGBA = hex_to_linear(0x00, 0xD4, 0xAA) # 应用/确认(青绿) / Apply/Confirm (teal)
+    APPLY_BUTTON      : RGBA = (0.922, 0.341, 0.341, 1.0)  # 应用/确认(红) / Apply/Confirm (theme red #EB5757)
 
     # ══════════════════════════════════════════════════════════════════════
     #  头部/树节点/可选项 / Headers, Tree Nodes, Selectables
     # ══════════════════════════════════════════════════════════════════════
 
-    HEADER            : RGBA = srgb3(0.12, 0.12, 0.16)      # 默认 / Normal
-    HEADER_HOVERED    : RGBA = srgb3(0.15, 0.19, 0.22)      # 悬停 / Hovered (cyan tint)
-    HEADER_ACTIVE     : RGBA = srgb3(0.16, 0.21, 0.24)      # 按下 / Active (deeper cyan)
-    SELECTION_BG      : RGBA = srgb3(0.13, 0.19, 0.23)      # 选择背景 / Selection bg (cyan)
+    HEADER            : RGBA = (0.235, 0.235, 0.235, 1.0)   # 默认 / Normal (Unity #3C3C3C)
+    HEADER_HOVERED    : RGBA = (0.28,  0.24,  0.24,  1.0)   # 悬停 / Hovered (red tint)
+    HEADER_ACTIVE     : RGBA = (0.32,  0.25,  0.25,  1.0)   # 按下 / Active (deeper red)
+    SELECTION_BG      : RGBA = (0.173, 0.365, 0.529, 1.0)   # 选择背景 / Selection bg (Unity blue #2C5D87)
 
     # ══════════════════════════════════════════════════════════════════════
     #  分割条 / Splitter Colors
     # ══════════════════════════════════════════════════════════════════════
 
-    SPLITTER_HOVER    : RGBA = (0.18, 0.28, 0.33, 0.6)      # 悬停 / Hovered (cyan tint)
-    SPLITTER_ACTIVE   : RGBA = (0.18, 0.28, 0.33, 0.8)      # 激活 / Active
+    SPLITTER_HOVER    : RGBA = (0.35, 0.25, 0.25, 0.6)      # 悬停 / Hovered (red tint)
+    SPLITTER_ACTIVE   : RGBA = (0.40, 0.28, 0.28, 0.8)      # 激活 / Active
 
     # ══════════════════════════════════════════════════════════════════════
     #  拖放 / Drag & Drop
@@ -328,7 +329,7 @@ class Theme:
     DND_DROP_OUTLINE_THICKNESS: float = 1.5                  # 拖放轮廓粗细 / Outline thickness (px)
     DND_REORDER_LINE        : RGBA = (1.0, 1.0, 1.0, 0.90)  # 重排指示线 / Reorder indicator line
     DND_REORDER_LINE_THICKNESS: float = 2.0                  # 重排线粗细 / Line thickness (px)
-    DND_REORDER_SEPARATOR_H : float = 6.0                    # 重排分隔器高度 / Separator height (px)
+    DND_REORDER_SEPARATOR_H : float = 3.0                    # 重排分隔器高度 / Separator height (px)
 
     # ══════════════════════════════════════════════════════════════════════
     #  控制台/日志 / Console & Log Colors
@@ -345,8 +346,8 @@ class Theme:
     SUCCESS_TEXT      : RGBA = (0.70,  0.80,  0.70,  1.0)   # 成功文本 / Success text (green)
     WARNING_TEXT      : RGBA = (0.90,  0.60,  0.20,  1.0)   # 警告文本 / Warning text (orange)
     ERROR_TEXT        : RGBA = (0.90,  0.30,  0.30,  1.0)   # 错误文本 / Error text (red)
-    PREFAB_TEXT       : RGBA = (235.0 / 255.0, 87.0 / 255.0, 87.0 / 255.0, 1.0) # 预制体文本 / Prefab instance text (theme red)
-    PREFAB_HEADER_BG  : RGBA = srgb3(0.12, 0.12, 0.16)             # 预制体头部背景 / Prefab header bg (matches HEADER)
+    PREFAB_TEXT       : RGBA = (235/255, 87/255, 87/255, 1.0)                    # 预制体文本 / Prefab instance text (theme red)
+    PREFAB_HEADER_BG  : RGBA = (0.235, 0.235, 0.235, 1.0)            # 预制体头部背景 / Prefab header bg (matches HEADER)
     PREFAB_HEADER_H   : float = 28.0                                # 预制体头部高度 / Prefab header row height
     PREFAB_HEADER_BTN_GAP : float = 4.0                             # 预制体按钮间距 / Prefab header button gap
     PREFAB_BTN_NORMAL : RGBA = (235.0 / 255.0, 87.0 / 255.0, 87.0 / 255.0, 0.95) # 预制体按钮默认 / Prefab button normal (theme red)
@@ -354,15 +355,15 @@ class Theme:
     PREFAB_BTN_ACTIVE : RGBA = (220.0 / 255.0, 67.0 / 255.0, 67.0 / 255.0, 1.0)    # 预制体按钮按下 / Prefab button active (deeper red)
 
     # -- 控制台交替行背景 / Console Alternating Row Background
-    ROW_ALT           : RGBA = (0.06, 0.06, 0.09, 0.40)     # 交替行 / Alternate row bg (blue tint)
+    ROW_ALT           : RGBA = (0.0, 0.0, 0.0, 0.06)       # 交替行 / Alternate row bg (subtle)
     ROW_NONE          : RGBA = (0.0,  0.0,  0.0,  0.0)      # 无背景 / No bg
 
     # ══════════════════════════════════════════════════════════════════════
     #  播放模式边框 / Play-Mode Viewport Border
     # ══════════════════════════════════════════════════════════════════════
 
-    BORDER_PLAY       : RGBA = hex_to_linear(0x03, 0xDE, 0x6D) # 播放中边框(绿) / Playing border (green)
-    BORDER_PAUSE      : RGBA = hex_to_linear(0xFF, 0xB7, 0x4D) # 暂停中边框(琥珀) / Paused border (amber)
+    BORDER_PLAY       : RGBA = (0.012, 0.871, 0.427, 1.0) # 播放中边框(绿) / Playing border (green #03DE6D)
+    BORDER_PAUSE      : RGBA = (1.0,   0.718, 0.302, 1.0) # 暂停中边框(琥珀) / Paused border (amber #FFB74D)
     BORDER_THICKNESS  : float = 2.0                             # 边框粗细 / Border thickness (px)
 
     # ══════════════════════════════════════════════════════════════════════
@@ -402,18 +403,18 @@ class Theme:
     INSPECTOR_CHECKBOX_SLOT_W    = 22.0                  # 复选框插槽宽度 / Checkbox slot width
 
     # -- 检视器头部颜色 / Inspector Header Colors
-    INSPECTOR_HEADER_PRIMARY    : RGBA = srgb3(0.14, 0.14, 0.18)     # 主头部 / Primary (steel)
-    INSPECTOR_HEADER_PRIMARY_HOVERED : RGBA = srgb3(0.16, 0.20, 0.23) # 主头部悬停 / Primary hovered (cyan)
-    INSPECTOR_HEADER_PRIMARY_ACTIVE  : RGBA = srgb3(0.17, 0.22, 0.26) # 主头部激活 / Primary active
-    INSPECTOR_HEADER_SECONDARY  : RGBA = srgb3(0.11, 0.11, 0.14)     # 次头部 / Secondary
-    INSPECTOR_HEADER_SECONDARY_HOVERED : RGBA = srgb3(0.13, 0.16, 0.19)
-    INSPECTOR_HEADER_SECONDARY_ACTIVE  : RGBA = srgb3(0.14, 0.18, 0.21)
+    INSPECTOR_HEADER_PRIMARY    : RGBA = (0.235, 0.235, 0.235, 1.0)        # 主头部 / Primary (Unity gray)
+    INSPECTOR_HEADER_PRIMARY_HOVERED : RGBA = (0.28,  0.24,  0.24,  1.0)  # 主头部悬停 / Primary hovered (red tint)
+    INSPECTOR_HEADER_PRIMARY_ACTIVE  : RGBA = (0.32,  0.25,  0.25,  1.0)  # 主头部激活 / Primary active
+    INSPECTOR_HEADER_SECONDARY  : RGBA = (0.20,  0.20,  0.20,  1.0)       # 次头部 / Secondary
+    INSPECTOR_HEADER_SECONDARY_HOVERED : RGBA = (0.25,  0.22,  0.22,  1.0)
+    INSPECTOR_HEADER_SECONDARY_ACTIVE  : RGBA = (0.28,  0.24,  0.24,  1.0)
 
     # -- 检视器内联按钮 / Inspector Inline Buttons
-    INSPECTOR_INLINE_BTN_IDLE  : RGBA = srgb3(0.12, 0.12, 0.16)     # 空闲 / Idle
-    INSPECTOR_INLINE_BTN_HOVER : RGBA = srgb3(0.15, 0.19, 0.22)     # 悬停 / Hover (cyan)
-    INSPECTOR_INLINE_BTN_ACTIVE: RGBA = hex_to_linear(0x00, 0xBC, 0xD4) # 按下 / Active (electric cyan)
-    INSPECTOR_INLINE_BTN_ON    : RGBA = hex_to_linear(0x00, 0xD4, 0xAA) # 选中 / Active (bright teal)
+    INSPECTOR_INLINE_BTN_IDLE  : RGBA = (0.20,  0.20,  0.20,  1.0)          # 空闲 / Idle
+    INSPECTOR_INLINE_BTN_HOVER : RGBA = (0.28,  0.24,  0.24,  1.0)          # 悬停 / Hover (red tint)
+    INSPECTOR_INLINE_BTN_ACTIVE: RGBA = (0.922, 0.341, 0.341, 1.0)          # 按下 / Active (theme red #EB5757)
+    INSPECTOR_INLINE_BTN_ON    : RGBA = (0.80,  0.30,  0.30,  1.0)          # 选中 / Active (dimmer red)
     INSPECTOR_INLINE_BTN_GAP   : float = 4.0                         # 按钮间距 / Button gap
     INSPECTOR_INLINE_BTN_H     : float = 0.0                         # 按钮高度 / Button height (0=auto)
 
@@ -447,8 +448,12 @@ class Theme:
     #  层级面板 / Hierarchy Panel
     # ══════════════════════════════════════════════════════════════════════
 
-    TREE_ITEM_SPC     = (0.0, 3.0)     # 树节点项间距 / Tree item spacing
-    TREE_FRAME_PAD    = (4.0, 5.0)     # 树节点帧内边距 / Tree frame padding (makes nodes taller)
+    TREE_ITEM_SPC     = (0.0, 0.0)     # 树节点项间距 / Tree item spacing (Unity: 0)
+    TREE_FRAME_PAD    = (2.0, 2.0)     # 树节点帧内边距 / Tree frame padding (Unity-compact)
+    TREE_INDENT       : float = 14.0   # 树节点缩进 / Tree indent per level (Unity: ~14px)
+    TREE_ROW_ALT_BG   : RGBA = (0.0, 0.0, 0.0, 0.08)  # 交替行背景 / Alternating row tint
+    TREE_DND_LINE_CLR : RGBA = (0.33, 0.56, 0.90, 1.0) # 拖拽插入线 / Drag insertion line (Unity blue)
+    PREFAB_ICON       : str  = "\u25C6"                 # 预制体图标 / Prefab icon (diamond)
 
     # ══════════════════════════════════════════════════════════════════════
     #  控制台面板 / Console Panel Spacing
@@ -466,9 +471,9 @@ class Theme:
     STATUS_BAR_FRAME_PAD = (0.0, 0.0)   # 帧内边距 / Frame padding
 
     # -- 状态/进度指示器 / Status/Progress Indicator (状态栏右侧)
-    STATUS_PROGRESS_FRACTION : float = 0.20                           # 右侧占比 / Right fraction
+    STATUS_PROGRESS_FRACTION : float = 0.25                           # 右侧占比 / Right fraction (1/4)
     STATUS_PROGRESS_H        : float = 4.0                            # 进度条高度 / Progress bar height
-    STATUS_PROGRESS_CLR      : RGBA = (0.00, 0.60, 0.70, 1.0)       # 进度色(青) / Progress color (teal)
+    STATUS_PROGRESS_CLR      : RGBA = (235/255, 87/255, 87/255, 1.0) # 进度色(红) / Progress color (theme red)
     STATUS_PROGRESS_BG       : RGBA = (0.10, 0.10, 0.10, 1.0)       # 进度背景 / Progress bg
     STATUS_PROGRESS_LABEL_CLR: RGBA = (0.65, 0.65, 0.65, 1.0)       # 进度文本 / Progress label color
 
@@ -496,13 +501,13 @@ class Theme:
     SCENE_ORIENT_AXIS_LEN     : float = 30.0      # 轴线长度 / Axis line length
     SCENE_ORIENT_END_RADIUS   : float = 7.0       # 轴端圆半径 / Axis end circle radius
     SCENE_ORIENT_NEG_RADIUS   : float = 4.0       # 负轴端圆半径 / Negative axis circle radius
-    SCENE_ORIENT_BG           : RGBA = (0.10, 0.10, 0.14, 0.6)   # 背景色 / Background (space dark)
+    SCENE_ORIENT_BG           : RGBA = (0.10, 0.10, 0.10, 0.6)   # 背景色 / Background (neutral dark)
     SCENE_ORIENT_FLY_DURATION : float = 0.3       # 飞行动画时长(秒) / Fly animation duration (s)
 
     # -- 场景覆盖层下拉 / Scene Overlay Dropdown
-    SCENE_OVERLAY_COMBO_BG    : RGBA = (0.10, 0.10, 0.14, 0.85)  # 背景 / Background (space dark)
-    SCENE_OVERLAY_COMBO_HOVER : RGBA = (0.16, 0.20, 0.24, 0.90)  # 悬停 / Hover (cyan tint)
-    SCENE_OVERLAY_COMBO_ACTIVE: RGBA = (0.13, 0.17, 0.20, 0.95)  # 激活 / Active
+    SCENE_OVERLAY_COMBO_BG    : RGBA = (0.14, 0.14, 0.14, 0.85)  # 背景 / Background (neutral dark)
+    SCENE_OVERLAY_COMBO_HOVER : RGBA = (0.22, 0.19, 0.19, 0.90)  # 悬停 / Hover (red tint)
+    SCENE_OVERLAY_COMBO_ACTIVE: RGBA = (0.18, 0.16, 0.16, 0.95)  # 激活 / Active (red tint)
     SCENE_OVERLAY_ROUNDING    : float = 4.0       # 圆角 / Rounding
     SCENE_OVERLAY_BORDER_SIZE : float = 0.0       # 边框 / Border size
 
@@ -511,8 +516,8 @@ class Theme:
     # ══════════════════════════════════════════════════════════════════════
 
     # -- 画布 / Canvas
-    UI_EDITOR_CANVAS_BG       : RGBA = (0.10, 0.10, 0.13, 1.0)   # 画布背景 / Canvas background (space dark)
-    UI_EDITOR_CANVAS_BORDER   : RGBA = (0.30, 0.35, 0.40, 1.0)   # 画布边框 / Canvas border (steel)
+    UI_EDITOR_CANVAS_BG       : RGBA = (0.12, 0.12, 0.12, 1.0)   # 画布背景 / Canvas background (neutral dark)
+    UI_EDITOR_CANVAS_BORDER   : RGBA = (0.30, 0.30, 0.30, 1.0)   # 画布边框 / Canvas border (neutral gray)
 
     # -- 元素交互 / Element Interaction
     UI_EDITOR_ELEMENT_HOVER   : RGBA = (0.00, 0.74, 0.83, 0.12)  # 元素悬停 / Element hover (cyan glow)
@@ -650,7 +655,7 @@ class Theme:
     ICON_WARNING       : str = "\u25b2"         # ▲ 三角 / Triangle
     ICON_ERROR         : str = "\u25cf"         # ● 圆点 / Filled circle
     ICON_DOT           : str = "\u00b7"         # · 中点 / Middle dot
-    ICON_CHECK         : str = "\u2713"         # ✓ 对勾 / Check mark
+    ICON_CHECK         : str = "v"         # v 对勾 / Check mark
 
     # -- 图片图标名 / Image Icon Names (由 EditorIcons.get 加载)
     ICON_IMG_PLUS      : str = "plus"

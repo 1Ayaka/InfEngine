@@ -80,6 +80,7 @@ class UIEditorPanel(EditorPanel):
 
         # ── Focus tracking ──
         self._was_focused: bool = False
+        self._ui_mode_init_done: bool = False
         self._settings_loaded: bool = False
         self._active_alignment_guides: list[tuple[str, float, float, float]] = []
 
@@ -376,6 +377,11 @@ class UIEditorPanel(EditorPanel):
         self._load_view_settings()
 
     def _on_visible_pre(self, ctx):
+        # First-time: if the UIEditor is visible on startup, enter UI mode
+        if not self._ui_mode_init_done:
+            self._ui_mode_init_done = True
+            if self._on_request_ui_mode:
+                self._on_request_ui_mode(True)
         focused = ctx.is_window_focused(0)
         if focused and not self._was_focused:
             if self._on_request_ui_mode:

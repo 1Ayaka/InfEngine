@@ -54,6 +54,7 @@ class ConsolePanel(EditorPanel):
         self._play_mode_manager = None
         self._detail_h = 90.0            # draggable detail pane height
         self._request_focus = False       # set True to focus console next frame
+        self._scroll_to_bottom = False    # one-shot flag for auto-scroll on new content
         # ---- Cached filter / count state (avoid rebuilding every frame) ----
         self._cache_dirty = True          # set True when _logs changes
         self._filter_dirty = True         # set True when filter toggles change
@@ -177,6 +178,8 @@ class ConsolePanel(EditorPanel):
         if len(self._logs) > self._max_logs:
             self._logs.pop(0)
         self._cache_dirty = True
+        if not self._user_scrolled_up:
+            self._scroll_to_bottom = True
         # Error Pause: pause play mode on first error
         if level == "error" and self._error_pause:
             pm = self._play_mode_manager
@@ -199,6 +202,8 @@ class ConsolePanel(EditorPanel):
         if len(self._logs) > self._max_logs:
             self._logs.pop(0)
         self._cache_dirty = True
+        if not self._user_scrolled_up:
+            self._scroll_to_bottom = True
 
     def clear(self):
         self._logs.clear()
@@ -420,8 +425,9 @@ class ConsolePanel(EditorPanel):
                 else:
                     self._user_scrolled_up = True
 
-            if not self._user_scrolled_up and visible:
+            if self._scroll_to_bottom and visible:
                 ctx.set_scroll_here_y(1.0)
+                self._scroll_to_bottom = False
         ctx.end_child()
         ctx.pop_style_color(1)
 

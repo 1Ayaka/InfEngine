@@ -36,11 +36,13 @@ def _plog(msg):
     """Write to player.log (only available in packaged builds)."""
     path = os.environ.get("_INFENGINE_PLAYER_LOG")
     if not path:
-        # Fallback: write next to the executable
+        # Fallback: write into Data/Logs/ next to the executable
         import sys as _sys
         _exe = getattr(_sys, 'executable', '') or ''
         _d = os.path.dirname(os.path.abspath(_exe))
-        path = os.path.join(_d, "player.log")
+        _logs_dir = os.path.join(_d, "Data", "Logs")
+        os.makedirs(_logs_dir, exist_ok=True)
+        path = os.path.join(_logs_dir, "player.log")
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(str(msg) + "\n")

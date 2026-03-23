@@ -86,13 +86,22 @@ def _snapshot_value(value: Any) -> Any:
     value types like Vector3) are returned as-is.  Lists and dicts are
     deep-copied so that later in-place mutations do not corrupt undo
     snapshots.
+
+    If deep-copy fails (e.g. pybind11 C++ objects that cannot be pickled),
+    fall back to a shallow copy so the undo system stays functional.
     """
     if isinstance(value, list):
         import copy
-        return copy.deepcopy(value)
+        try:
+            return copy.deepcopy(value)
+        except Exception:
+            return list(value)
     if isinstance(value, dict):
         import copy
-        return copy.deepcopy(value)
+        try:
+            return copy.deepcopy(value)
+        except Exception:
+            return dict(value)
     return value
 
 

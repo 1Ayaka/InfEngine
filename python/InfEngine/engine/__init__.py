@@ -200,7 +200,14 @@ def run_player(project_path: str, engine_log_level=LogLevel.Info):
     import time
     from .player_bootstrap import PlayerBootstrap
 
-    lock_path, lock_token = _acquire_project_lock(project_path, "player")
+    # Packaged/standalone games skip the project lock entirely — they
+    # have their own self-contained Data folder and should never conflict
+    # with an editor instance or another packaged game.
+    is_packaged = os.environ.get("_INFENGINE_PLAYER_MODE") == "1"
+
+    lock_path = lock_token = None
+    if not is_packaged:
+        lock_path, lock_token = _acquire_project_lock(project_path, "player")
 
     try:
         # Read optional BuildManifest for display & splash settings
@@ -216,7 +223,9 @@ def run_player(project_path: str, engine_log_level=LogLevel.Info):
         display_mode = manifest.get("display_mode", "fullscreen_borderless")
         window_width = manifest.get("window_width", 1920)
         window_height = manifest.get("window_height", 1080)
+        window_resizable = manifest.get("window_resizable", True)
         splash_items = manifest.get("splash_items", [])
+        game_name = manifest.get("game_name", "")
 
         bootstrap = PlayerBootstrap(
             project_path, engine_log_level,
@@ -227,12 +236,16 @@ def run_player(project_path: str, engine_log_level=LogLevel.Info):
         )
         bootstrap.run()
 
-        # Set window title to project name
-        project_name = os.path.basename(os.path.normpath(project_path))
-        bootstrap.engine.set_window_title(project_name)
+        # Set window title to game name (from manifest or folder name)
+        title = game_name or os.path.basename(os.path.normpath(project_path))
+        bootstrap.engine.set_window_title(title)
 
         if display_mode == "fullscreen_borderless":
             bootstrap.engine.set_fullscreen(True)
+        else:
+            # Windowed mode: don't maximize, respect the specified size
+            bootstrap.engine.set_maximized(False)
+            bootstrap.engine.set_resizable(window_resizable)
 
         bootstrap.engine.set_window_icon(icon_path)
 
@@ -242,7 +255,8 @@ def run_player(project_path: str, engine_log_level=LogLevel.Info):
         bootstrap.engine.show()
         bootstrap.engine.run()
     finally:
-        _remove_project_lock(lock_path, lock_token)
+        if lock_path and lock_token:
+            _remove_project_lock(lock_path, lock_token)
 
     os._exit(0)
 

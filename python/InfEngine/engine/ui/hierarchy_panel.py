@@ -10,7 +10,9 @@ from .editor_panel import EditorPanel
 from .panel_registry import editor_panel
 from .selection_manager import SelectionManager
 from .theme import Theme, ImGuiCol, ImGuiStyleVar, ImGuiTreeNodeFlags
-from .imgui_keys import KEY_LEFT_CTRL, KEY_RIGHT_CTRL, KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT
+from .imgui_keys import (KEY_LEFT_CTRL, KEY_RIGHT_CTRL, KEY_LEFT_SHIFT,
+                         KEY_RIGHT_SHIFT, KEY_F2, KEY_DELETE, KEY_ENTER,
+                         KEY_ESCAPE)
 
 
 @editor_panel("Hierarchy", type_id="hierarchy", title_key="panel.hierarchy")
@@ -45,13 +47,18 @@ class HierarchyPanel(EditorPanel):
         self._pending_shift: bool = False  # shift was held when click started
         # Virtual scrolling — only render nodes inside the visible scroll viewport.
         # _cached_item_height is measured from the first rendered item each session.
-        self._cached_item_height: float = 27.0  # FramePad(5)*2 + font(14) + ItemSpacing(3)
+        self._cached_item_height: float = 18.0  # FramePad(2)*2 + font(14) + ItemSpacing(0)
         self._item_height_measured: bool = False
+        # Inline rename state (F2)
+        self._rename_id: int = 0          # ID of object being renamed, 0 = not renaming
+        self._rename_buf: str = ""        # Current text in the rename input
+        self._rename_focus: bool = False  # True on the first frame to auto-focus the input
         # Root objects cache — avoids re-creating 1024 pybind11 wrappers every frame.
         self._cached_root_objects = None
         self._cached_structure_version: int = -1
-        # UI Mode: when True, only show Canvas GameObjects & their children
+        # UI Mode: when True, show Canvas trees normally, dim others
         self._ui_mode: bool = False
+        self._ui_mode_canvas_root_ids: set = set()  # root IDs that are canvas trees
         self._on_selection_changed_ui_editor = None  # Extra callback for UI editor sync
         self._cached_ordered_ids = None
         self._cached_canvas_roots = None
@@ -83,6 +90,13 @@ class HierarchyPanel(EditorPanel):
     def _notify_selection_changed(self):
         """Notify listeners about selection change."""
         obj = self.get_selected_object()
+        # In UI mode, only update inspector for canvas-tree objects
+        if self._ui_mode and obj is not None:
+            if not self._is_in_canvas_tree(obj):
+                # Still notify UI editor callback but skip inspector
+                if self._on_selection_changed_ui_editor:
+                    self._on_selection_changed_ui_editor(obj)
+                return
         if self._on_selection_changed:
             self._on_selection_changed(obj)
         if self._on_selection_changed_ui_editor:
@@ -186,8 +200,8 @@ class HierarchyPanel(EditorPanel):
             self._pending_expand_ids.add(parent.id)
             parent = parent.get_parent()
     
-    # Height of the invisible separator drop zone (pixels)
-    _SEPARATOR_H = 6.0
+    # Height of the invisible separator drop zone (pixels) – thinner for Unity feel
+
 
     def _render_game_object_tree(self, ctx: InfGUIContext, obj) -> None:
         """Recursively render a GameObject and its children as tree nodes.
@@ -199,7 +213,7 @@ class HierarchyPanel(EditorPanel):
         * **Dropping onto the thin separator after the node** → insert the
           dragged object *after* this sibling (same parent level).
 
-        A white horizontal line is drawn on the separator while dragging
+        A blue horizontal line is drawn on the separator while dragging
         to clearly indicate the insertion point (via ``IGUI.reorder_separator``).
         """
         if obj is None:
@@ -207,9 +221,17 @@ class HierarchyPanel(EditorPanel):
 
         from .igui import IGUI
 
+        obj_id = obj.id
+
         # Use string-based push_id — obj.id is uint64_t which can exceed
         # the 32-bit int limit of push_id().
-        ctx.push_id_str(str(obj.id))
+        ctx.push_id_str(str(obj_id))
+
+        # ── Inline rename mode ───────────────────────────────────────
+        if self._rename_id == obj_id:
+            self._render_rename_input(ctx, obj)
+            ctx.pop_id()
+            return
 
         # Tree node flags for hierarchy items
         node_flags = (ImGuiTreeNodeFlags.OpenOnArrow
@@ -217,7 +239,7 @@ class HierarchyPanel(EditorPanel):
                       | ImGuiTreeNodeFlags.FramePadding)
 
         # Check if this object is selected
-        if self._sel.is_selected(obj.id):
+        if self._sel.is_selected(obj_id):
             node_flags |= ImGuiTreeNodeFlags.Selected
 
         # Check if has children - if not, use leaf flag (no arrow)
@@ -226,32 +248,44 @@ class HierarchyPanel(EditorPanel):
             node_flags |= ImGuiTreeNodeFlags.Leaf
 
         # Handle auto-expansion (single id — legacy; also check multi-id set)
-        if self._pending_expand_id == obj.id:
+        if self._pending_expand_id == obj_id:
             ctx.set_next_item_open(True)
             self._pending_expand_id = 0
-        if obj.id in self._pending_expand_ids:
+        if obj_id in self._pending_expand_ids:
             ctx.set_next_item_open(True)
-            self._pending_expand_ids.discard(obj.id)
+            self._pending_expand_ids.discard(obj_id)
 
-        # Create tree node - display name can be duplicated, ID is unique via PushID
+        # ── Display name with prefab decoration (Unity blue + diamond) ──
         is_prefab = getattr(obj, 'is_prefab_instance', False)
-        if is_prefab:
+        display_name = f"{Theme.PREFAB_ICON} {obj.name}" if is_prefab else obj.name
+
+        # In UI mode, dim objects not belonging to a canvas tree
+        ui_dimmed = self._ui_mode and not self._is_in_canvas_tree(obj)
+        text_color_pushed = 0
+        if ui_dimmed:
+            ctx.push_style_color(ImGuiCol.Text, *Theme.TEXT_DISABLED)
+            text_color_pushed = 1
+        elif is_prefab:
             ctx.push_style_color(ImGuiCol.Text, *Theme.PREFAB_TEXT)
-        is_open = ctx.tree_node_ex(obj.name, node_flags)
-        if is_prefab:
+            text_color_pushed = 1
+        is_open = ctx.tree_node_ex(display_name, node_flags)
+        if text_color_pushed:
             ctx.pop_style_color(1)
 
         # Handle selection — defer left-click until mouse-up so dragging
         # does not immediately change the Inspector.
         if ctx.is_item_clicked(0):
+            # Cancel any active rename when clicking a different item
+            if self._rename_id and self._rename_id != obj_id:
+                self._cancel_rename()
             # Record candidate; will be committed in on_render when button released
-            self._pending_select_id = obj.id
+            self._pending_select_id = obj_id
             self._pending_ctrl = self._is_ctrl(ctx)
             self._pending_shift = self._is_shift(ctx)
         if ctx.is_item_clicked(1):
             # Right-click selects immediately (needed for context menu)
-            if not self._sel.is_selected(obj.id):
-                self._sel.select(obj.id)
+            if not self._sel.is_selected(obj_id):
+                self._sel.select(obj_id)
                 self._notify_selection_changed()
 
         # Double-click → focus editor camera on this object
@@ -260,13 +294,24 @@ class HierarchyPanel(EditorPanel):
                 self._on_double_click_focus(obj)
 
         # Right-click context menu for this specific object
-        if ctx.begin_popup_context_item(f"ctx_menu_{obj.id}", 1):
-            self._right_clicked_object_id = obj.id
+        if ctx.begin_popup_context_item(f"ctx_menu_{obj_id}", 1):
+            self._right_clicked_object_id = obj_id
             if ctx.begin_menu(t("hierarchy.create_child")):
-                self._show_create_primitive_menu(ctx, parent_id=obj.id)
+                if ctx.begin_menu(t("hierarchy.create_3d_object")):
+                    self._show_create_primitive_menu(ctx, parent_id=obj_id)
+                    ctx.end_menu()
+                if ctx.begin_menu(t("hierarchy.light_menu")):
+                    self._show_create_light_menu(ctx, parent_id=obj_id)
+                    ctx.end_menu()
+                if ctx.begin_menu(t("hierarchy.rendering_menu")):
+                    self._show_create_rendering_menu(ctx, parent_id=obj_id)
+                    ctx.end_menu()
                 if ctx.selectable(t("hierarchy.empty_object"), False, 0, 0, 0):
-                    self._create_empty_object(parent_id=obj.id)
+                    self._create_empty_object(parent_id=obj_id)
                 ctx.end_menu()
+            ctx.separator()
+            if ctx.selectable(t("hierarchy.rename"), False, 0, 0, 0):
+                self._begin_rename(obj_id)
             ctx.separator()
             if ctx.selectable(t("hierarchy.save_as_prefab"), False, 0, 0, 0):
                 self._save_as_prefab(obj)
@@ -297,12 +342,11 @@ class HierarchyPanel(EditorPanel):
 
         # Drag source - start dragging this object
         if ctx.begin_drag_drop_source(0):
-            ctx.set_drag_drop_payload(self.DRAG_DROP_TYPE, obj.id)
+            ctx.set_drag_drop_payload(self.DRAG_DROP_TYPE, obj_id)
             ctx.label(f"{obj.name}")
             ctx.end_drag_drop_source()
 
-        # ── Drop target on the tree node body → reparent as child, create model child, or instantiate prefab ──
-        obj_id = obj.id
+        # ── Drop target on the tree node body → reparent as child ──
         IGUI.multi_drop_target(
             ctx,
             [self.DRAG_DROP_TYPE, "MODEL_GUID", "MODEL_FILE", "PREFAB_GUID", "PREFAB_FILE"],
@@ -319,7 +363,7 @@ class HierarchyPanel(EditorPanel):
                 self._render_game_object_tree(ctx, child)
             ctx.tree_pop()
 
-        # ── Separator drop zone AFTER this tree node (via IGUI) ──
+        # ── Separator drop zone AFTER this tree node ──
         IGUI.reorder_separator(ctx, f"##sep_after_{obj_id}", self.DRAG_DROP_TYPE,
                                lambda payload, _oid=obj_id: self._move_object_adjacent(payload, _oid, after=True))
 
@@ -338,12 +382,19 @@ class HierarchyPanel(EditorPanel):
         if dragged_obj and new_parent and dragged_id != new_parent_id:
             # Prevent parenting to own child
             if not self._is_descendant_of(new_parent, dragged_obj):
-                # UI Mode validation
+                # UI Mode validation: Canvas must stay root
                 if self._ui_mode:
                     if self._go_has_canvas(dragged_obj):
                         self._show_ui_mode_warning(
                             "Canvas 只能作为根物体，不能放入其他物体下。\n"
                             "Canvas can only be a root object.")
+                        return
+                # Always block: UI screen components must stay under a Canvas
+                if self._go_has_ui_screen_component(dragged_obj):
+                    if not self._parent_has_canvas_ancestor(new_parent):
+                        self._show_ui_mode_warning(
+                            "UI 组件只能放在 Canvas 下。\n"
+                            "UI components must be placed under a Canvas.")
                         return
                 old_parent = dragged_obj.get_parent()
                 old_parent_id = old_parent.id if old_parent else None
@@ -384,6 +435,14 @@ class HierarchyPanel(EditorPanel):
                     "UI elements must be placed under a Canvas.")
                 return
 
+        # Always block: UI screen components must stay under a Canvas
+        if self._go_has_ui_screen_component(dragged_obj):
+            if new_parent_id is None or not self._parent_has_canvas_ancestor(new_parent):
+                self._show_ui_mode_warning(
+                    "UI 组件只能放在 Canvas 下。\n"
+                    "UI components must be placed under a Canvas.")
+                return
+
         old_parent = dragged_obj.get_parent()
         old_parent_id = old_parent.id if old_parent else None
         old_index = dragged_obj.transform.get_sibling_index() if getattr(dragged_obj, "transform", None) else 0
@@ -416,7 +475,90 @@ class HierarchyPanel(EditorPanel):
         if self._sel.is_selected(obj_id):
             self._sel.clear()
             self._notify_selection_changed()
-    
+
+    def _delete_selected_objects(self) -> None:
+        """Delete all selected GameObjects."""
+        from InfEngine.lib import SceneManager
+        scene = SceneManager.instance().get_active_scene()
+        if not scene:
+            return
+        ids = list(self._sel.get_ids())
+        if not ids:
+            return
+        for oid in ids:
+            obj = scene.find_by_id(oid)
+            if obj:
+                self._undo.record_delete(oid, "Delete GameObject")
+        self._sel.clear()
+        self._notify_selection_changed()
+
+    # ------------------------------------------------------------------
+    # Inline rename (F2)
+    # ------------------------------------------------------------------
+
+    def _begin_rename(self, obj_id: int):
+        """Enter inline rename mode for *obj_id*."""
+        from InfEngine.lib import SceneManager
+        scene = SceneManager.instance().get_active_scene()
+        if not scene:
+            return
+        obj = scene.find_by_id(obj_id)
+        if not obj:
+            return
+        self._rename_id = obj_id
+        self._rename_buf = obj.name
+        self._rename_focus = True
+
+    def _commit_rename(self):
+        """Confirm the rename — apply new name to the object."""
+        if not self._rename_id:
+            return
+        new_name = self._rename_buf.strip()
+        if new_name:
+            from InfEngine.lib import SceneManager
+            scene = SceneManager.instance().get_active_scene()
+            if scene:
+                obj = scene.find_by_id(self._rename_id)
+                if obj:
+                    obj.name = new_name
+        self._rename_id = 0
+        self._rename_buf = ""
+
+    def _cancel_rename(self):
+        """Cancel the rename without applying changes."""
+        self._rename_id = 0
+        self._rename_buf = ""
+
+    def _render_rename_input(self, ctx: InfGUIContext, obj):
+        """Render the inline text input for renaming *obj*.
+
+        Replaces the tree-node row when self._rename_id matches.
+        Enter commits, Escape cancels, click-away deactivates and commits.
+        """
+        if self._rename_focus:
+            ctx.set_keyboard_focus_here()
+            self._rename_focus = False
+
+        # Use input_text_with_hint (supports flags); EnterReturnsTrue = 32
+        avail_w = ctx.get_content_region_avail_width()
+        ctx.set_next_item_width(avail_w)
+        self._rename_buf = ctx.input_text_with_hint(
+            "##rename", "", self._rename_buf, 256, 0)
+
+        # Commit on Enter
+        if ctx.is_key_pressed(KEY_ENTER):
+            self._commit_rename()
+            return
+
+        # Cancel on Escape
+        if ctx.is_key_pressed(KEY_ESCAPE):
+            self._cancel_rename()
+            return
+
+        # Commit when the input loses focus (click elsewhere)
+        if ctx.is_item_deactivated():
+            self._commit_rename()
+
     # ------------------------------------------------------------------
     # EditorPanel hooks
     # ------------------------------------------------------------------
@@ -425,6 +567,19 @@ class HierarchyPanel(EditorPanel):
         return (250, 400)
 
     def _pre_render(self, ctx: InfGUIContext):
+        # ── Keyboard shortcuts (F2 rename, Delete) ───────────────────
+        # Fire regardless of which panel is focused so that selecting
+        # an object in the Scene view and pressing F2/Delete works.
+        # Guard only against active text input to avoid conflicts.
+        if not ctx.want_text_input() and not self._sel.is_empty():
+            if ctx.is_key_pressed(KEY_F2) and self._rename_id == 0:
+                primary = self._sel.get_primary()
+                if primary:
+                    self._begin_rename(primary)
+
+            if ctx.is_key_pressed(KEY_DELETE):
+                self._delete_selected_objects()
+
         # ── Deferred left-click selection ────────────────────────────
         # Commit the pending selection only when the left mouse button
         # has been released AND the user was not dragging.
@@ -433,6 +588,17 @@ class HierarchyPanel(EditorPanel):
                 # Mouse released — commit if not dragging
                 if not ctx.is_mouse_dragging(0):
                     pid = self._pending_select_id
+                    # In UI mode, block selection of non-canvas objects
+                    if self._ui_mode:
+                        from InfEngine.lib import SceneManager
+                        _scene = SceneManager.instance().get_active_scene()
+                        if _scene:
+                            _go = _scene.find_by_id(pid)
+                            if _go and not self._is_in_canvas_tree(_go):
+                                self._pending_select_id = 0
+                                self._pending_ctrl = False
+                                self._pending_shift = False
+                                return
                     if self._pending_ctrl:
                         self._sel.toggle(pid)
                     elif self._pending_shift:
@@ -477,16 +643,17 @@ class HierarchyPanel(EditorPanel):
         from InfEngine.lib import SceneManager
         scene = SceneManager.instance().get_active_scene()
         if scene:
-            # Small gap between objects
+            # Unity-compact spacing
             ctx.push_style_var_vec2(ImGuiStyleVar.ItemSpacing, *Theme.TREE_ITEM_SPC)
-            # Make tree nodes taller (~+10px top/bottom, easier to click)
             ctx.push_style_var_vec2(ImGuiStyleVar.FramePadding, *Theme.TREE_FRAME_PAD)
+            ctx.push_style_var_float(ImGuiStyleVar.IndentSpacing, Theme.TREE_INDENT)
 
             root_objects = self._get_root_objects_cached(scene)
 
-            # In UI Mode, filter to only Canvas root GameObjects
+            # In UI Mode, compute canvas root set for dim/allow logic
             if self._ui_mode:
-                root_objects = self._get_canvas_roots_cached(root_objects)
+                canvas_roots = self._get_canvas_roots_cached(root_objects)
+                self._ui_mode_canvas_root_ids = {go.id for go in canvas_roots}
 
             n_roots = len(root_objects) if root_objects else 0
 
@@ -529,6 +696,8 @@ class HierarchyPanel(EditorPanel):
                 ctx.invisible_button("##drop_to_root", ctx.get_content_region_avail_width(), remaining_height)
 
                 if ctx.is_item_clicked(0):
+                    # Cancel rename if clicking empty space
+                    self._cancel_rename()
                     self.clear_selection()
 
                 from .igui import IGUI
@@ -538,7 +707,7 @@ class HierarchyPanel(EditorPanel):
                     self._handle_external_drop,
                 )
 
-            ctx.pop_style_var(2)  # FramePadding + ItemSpacing
+            ctx.pop_style_var(3)  # IndentSpacing + FramePadding + ItemSpacing
         
         # Parent for new objects: if something is selected, use it as parent.
         # In prefab mode, all new objects MUST be children of the prefab root.
@@ -563,24 +732,21 @@ class HierarchyPanel(EditorPanel):
                 if ctx.begin_menu(t("hierarchy.light_menu")):
                     self._show_create_light_menu(ctx, parent_id=parent_id_for_new)
                     ctx.end_menu()
+                if ctx.begin_menu(t("hierarchy.rendering_menu")):
+                    self._show_create_rendering_menu(ctx, parent_id=parent_id_for_new)
+                    ctx.end_menu()
+                if ctx.begin_menu(t("hierarchy.ui_menu")):
+                    self._show_ui_menu(ctx, parent_id=parent_id_for_new)
+                    ctx.end_menu()
                 if ctx.selectable(t("hierarchy.create_empty"), False, 0, 0, 0):
                     self._create_empty_object(parent_id=parent_id_for_new)
             
             if not self._sel.is_empty():
                 ctx.separator()
                 if ctx.selectable(t("hierarchy.delete_selected"), False, 0, 0, 0):
-                    self._delete_selected_object()
+                    self._delete_selected_objects()
             
             ctx.end_popup()
-
-    def _delete_selected_object(self) -> None:
-        from InfEngine.lib import SceneManager
-        scene = SceneManager.instance().get_active_scene()
-        if scene:
-            primary = self._sel.get_primary()
-            selected = scene.find_by_id(primary) if primary else None
-            if selected:
-                self._delete_object(selected)
 
     def _reparent_to_root(self, dragged_id: int) -> None:
         """Reparent a GameObject to root (no parent)."""
@@ -596,6 +762,12 @@ class HierarchyPanel(EditorPanel):
                 self._show_ui_mode_warning(
                     "UI 元素不能成为根物体，必须放在 Canvas 下。\n"
                     "UI elements must be placed under a Canvas.")
+                return
+            # Always block: UI screen components cannot be root
+            if self._go_has_ui_screen_component(dragged_obj):
+                self._show_ui_mode_warning(
+                    "UI 组件只能放在 Canvas 下。\n"
+                    "UI components must be placed under a Canvas.")
                 return
             old_parent = dragged_obj.get_parent()
             old_parent_id = old_parent.id if old_parent else None
@@ -683,6 +855,13 @@ class HierarchyPanel(EditorPanel):
                     self._record_create(new_obj.id, f"Create {name.split()[0]}")
                     self._notify_selection_changed()
 
+    def _show_create_rendering_menu(self, ctx: InfGUIContext, parent_id: int = None) -> None:
+        """Show the Rendering submenu."""
+        if ctx.selectable(t("hierarchy.camera"), False, 0, 0, 0):
+            self._create_camera_object(parent_id=parent_id)
+        if ctx.selectable(t("hierarchy.render_stack"), False, 0, 0, 0):
+            self._create_render_stack_object(parent_id=parent_id)
+
     def _create_empty_object(self, parent_id: int = None) -> None:
         """Create an empty GameObject in the scene."""
         from InfEngine.lib import SceneManager
@@ -700,6 +879,66 @@ class HierarchyPanel(EditorPanel):
                 self._record_create(new_obj.id, "Create Empty")
                 # Notify Inspector about the new selection
                 self._notify_selection_changed()
+
+    def _create_camera_object(self, parent_id: int = None) -> None:
+        """Create a Camera GameObject in the scene."""
+        from InfEngine.lib import SceneManager
+        from InfEngine.math import Vector3
+
+        scene = SceneManager.instance().get_active_scene()
+        if not scene:
+            return
+
+        has_main_camera = getattr(scene, "main_camera", None) is not None
+        object_name = "Main Camera" if not has_main_camera and parent_id is None else "Camera"
+        new_obj = scene.create_game_object(object_name)
+        if not new_obj:
+            return
+
+        camera_comp = new_obj.add_component("Camera")
+        if camera_comp is None:
+            return
+
+        if parent_id is not None:
+            parent = scene.find_by_id(parent_id)
+            if parent:
+                new_obj.set_parent(parent)
+                self._pending_expand_id = parent_id
+        elif not has_main_camera:
+            new_obj.tag = "MainCamera"
+            new_obj.transform.position = Vector3(0.0, 1.0, -10.0)
+
+        self._sel.select(new_obj.id)
+        self._record_create(new_obj.id, "Create Camera")
+        self._notify_selection_changed()
+
+    def _create_render_stack_object(self, parent_id: int = None) -> None:
+        """Create a RenderStack GameObject in the scene."""
+        from InfEngine.lib import GameObject, SceneManager
+        from InfEngine.renderstack import RenderStack as RenderStackCls
+
+        scene = SceneManager.instance().get_active_scene()
+        if not scene:
+            return
+
+        new_obj = scene.create_game_object("RenderStack")
+        if not new_obj:
+            return
+
+        stack = new_obj.add_py_component(RenderStackCls())
+        if stack is None:
+            GameObject.destroy(new_obj)
+            return
+
+        if parent_id is not None:
+            parent = scene.find_by_id(parent_id)
+            if parent:
+                new_obj.set_parent(parent)
+                self._pending_expand_id = parent_id
+
+        self._sel.select(new_obj.id)
+        self._record_create(new_obj.id, "Create RenderStack")
+        self._notify_selection_changed()
 
     def _create_model_object(self, model_ref: str, parent_id: int = None, is_guid: bool = False) -> None:
         """Create a GameObject hierarchy from a dropped 3D model asset.
@@ -949,6 +1188,27 @@ class HierarchyPanel(EditorPanel):
                 return True
         return False
 
+    @staticmethod
+    def _go_has_ui_screen_component(go) -> bool:
+        """Check if a GameObject has any InfUIScreenComponent (Text/Image/Button etc.)."""
+        from InfEngine.ui.inf_ui_screen_component import InfUIScreenComponent
+        for comp in go.get_py_components():
+            if isinstance(comp, InfUIScreenComponent):
+                return True
+        return False
+
+    @staticmethod
+    def _parent_has_canvas_ancestor(parent) -> bool:
+        """Check if *parent* itself has a Canvas or has a Canvas ancestor."""
+        from InfEngine.ui import UICanvas
+        cur = parent
+        while cur is not None:
+            for comp in cur.get_py_components():
+                if isinstance(comp, UICanvas):
+                    return True
+            cur = cur.get_parent()
+        return False
+
     def _is_under_canvas(self, go) -> bool:
         """Check if *go* is a descendant (direct or indirect) of a Canvas GameObject."""
         from InfEngine.ui import UICanvas
@@ -960,11 +1220,27 @@ class HierarchyPanel(EditorPanel):
             parent = parent.get_parent()
         return False
 
+    def _is_in_canvas_tree(self, go) -> bool:
+        """Check if *go* belongs to a canvas tree (itself, ancestor, or descendant has UICanvas)."""
+        # Walk up to the root and check if that root is in the canvas root set
+        cur = go
+        while True:
+            parent = cur.get_parent()
+            if parent is None:
+                break
+            cur = parent
+        return cur.id in self._ui_mode_canvas_root_ids
+
     @staticmethod
     def _show_ui_mode_warning(msg: str):
         """Log a warning to the Console panel."""
         from InfEngine.debug import Debug
         Debug.log_warning(msg)
+
+    def _show_ui_menu(self, ctx: InfGUIContext, parent_id: int = None) -> None:
+        """Show the UI submenu."""
+        if ctx.selectable(t("hierarchy.ui_canvas"), False, 0, 0, 0):
+            self._create_ui_canvas(parent_id=parent_id)
 
     def _show_ui_mode_context_menu(self, ctx: InfGUIContext, parent_id: int = None):
         """Show right-click context menu in UI Mode (Canvas/Text creation only)."""
@@ -974,8 +1250,7 @@ class HierarchyPanel(EditorPanel):
             ctx.label(t("hierarchy.no_scene"))
             return
 
-        if ctx.selectable(t("hierarchy.ui_canvas"), False, 0, 0, 0):
-            self._create_ui_canvas(parent_id=parent_id)
+        self._show_ui_menu(ctx, parent_id=parent_id)
         if ctx.selectable(t("hierarchy.ui_text"), False, 0, 0, 0):
             self._create_ui_text(parent_id=parent_id)
         if ctx.selectable(t("hierarchy.ui_button"), False, 0, 0, 0):

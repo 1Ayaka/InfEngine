@@ -32,34 +32,42 @@ import py_compile
 import shutil
 import struct
 import sys
+import threading
 from typing import Callable, Dict, List, Optional
 
 from InfEngine.debug import Debug
 from InfEngine.engine.nuitka_builder import NuitkaBuilder
 
 
+class _BuildCancelled(Exception):
+    """Raised when the user cancels the build."""
+
+
 class GameBuilder:
     """Build a standalone native game distribution using Nuitka."""
 
     _GAME_DATA_DIRS = ["Assets", "ProjectSettings", "materials"]
-    _EXCLUDE_PATTERNS = {"__pycache__", ".git", ".gitignore"}
+    _EXCLUDE_PATTERNS = {"__pycache__", ".git", ".gitignore", ".infengine-engine-lock.json"}
 
     def __init__(
         self,
         project_path: str,
         output_dir: str,
         *,
+        game_name: str = "",
         display_mode: str = "fullscreen_borderless",
         window_width: int = 1280,
         window_height: int = 720,
+        window_resizable: bool = True,
         splash_items: Optional[List[Dict]] = None,
     ):
         self.project_path = os.path.abspath(project_path)
-        self.project_name = os.path.basename(self.project_path)
+        self.project_name = game_name.strip() if game_name.strip() else os.path.basename(self.project_path)
         self.output_dir = os.path.abspath(output_dir)
         self.display_mode = display_mode
         self.window_width = window_width
         self.window_height = window_height
+        self.window_resizable = window_resizable
         self.splash_items = list(splash_items) if splash_items else []
 
     # ------------------------------------------------------------------
@@ -69,10 +77,13 @@ class GameBuilder:
     def build(
         self,
         on_progress: Optional[Callable[[str, float], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> str:
         """Run the full build pipeline.  Returns the final output directory."""
 
         def _p(msg: str, pct: float):
+            if cancel_event is not None and cancel_event.is_set():
+                raise _BuildCancelled()
             if on_progress:
                 on_progress(msg, pct)
             Debug.log_internal(f"[Build {pct:.0%}] {msg}")
@@ -90,7 +101,7 @@ class GameBuilder:
         boot_script = self._generate_boot_script()
 
         _p("Nuitka 原生编译 Nuitka native compilation...", 0.06)
-        dist_dir = self._run_nuitka(boot_script, on_progress, user_packages)
+        dist_dir = self._run_nuitka(boot_script, on_progress, user_packages, cancel_event)
 
         _p("整理输出目录 Organizing output directory...", 0.86)
         final_dir = self._organize_output(dist_dir)
@@ -183,7 +194,10 @@ _DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
 if not os.path.isdir(os.path.join(_DIR, "Data")):
     _DIR = os.path.dirname(os.path.abspath(sys.executable))
 
-_LOG = os.path.join(_DIR, "player.log")
+# Logs go into Data/Logs/ to keep the root directory clean
+_LOGS_DIR = os.path.join(_DIR, "Data", "Logs")
+os.makedirs(_LOGS_DIR, exist_ok=True)
+_LOG = os.path.join(_LOGS_DIR, "player.log")
 os.environ["_INFENGINE_PLAYER_LOG"] = _LOG
 
 # Clear previous log
@@ -203,7 +217,7 @@ def _crash_report(exc):
     """Write crash details to a log file and show a Windows message box."""
     tb_text = traceback.format_exc()
     _log("CRASH: " + tb_text)
-    log_path = os.path.join(_DIR, "crash.log")
+    log_path = os.path.join(_LOGS_DIR, "crash.log")
     try:
         with open(log_path, "w", encoding="utf-8") as _f:
             _f.write(tb_text)
@@ -250,6 +264,7 @@ except Exception as _exc:
         boot_script: str,
         on_progress: Optional[Callable[[str, float], None]],
         user_packages: Optional[List[str]] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> str:
         """Invoke NuitkaBuilder. Returns the dist directory path."""
         from InfEngine.resources import icon_path
@@ -269,7 +284,7 @@ except Exception as _exc:
             if on_progress:
                 on_progress(msg, mapped)
 
-        return nk.build(on_progress=_nk_progress)
+        return nk.build(on_progress=_nk_progress, cancel_event=cancel_event)
 
     # ------------------------------------------------------------------
     # Organize output: move dist contents to the final output directory
@@ -624,9 +639,11 @@ except Exception as _exc:
             })
 
         manifest = {
+            "game_name": self.project_name,
             "display_mode": self.display_mode,
             "window_width": self.window_width,
             "window_height": self.window_height,
+            "window_resizable": self.window_resizable,
             "scenes": scenes,
             "splash_items": splash_runtime,
         }
@@ -669,6 +686,19 @@ except Exception as _exc:
                 removed_bytes += os.path.getsize(f)
                 os.remove(f)
 
+        # Remove duplicate engine DLLs from InfEngine/lib/ — they already
+        # exist in the dist root (placed by Nuitka / _inject_native_libs)
+        # and the root copy is what the OS DLL loader finds.  Keep only
+        # .pyd files in InfEngine/lib/ (needed for relative imports).
+        lib_dir = os.path.join(final_dir, "InfEngine", "lib")
+        if os.path.isdir(lib_dir):
+            for fname in os.listdir(lib_dir):
+                if fname.lower().endswith(".dll"):
+                    fp = os.path.join(lib_dir, fname)
+                    if os.path.isfile(fp):
+                        removed_bytes += os.path.getsize(fp)
+                        os.remove(fp)
+
         # Remove .meta files from engine shaders (editor hot-reload metadata)
         shaders_dir = os.path.join(final_dir, "InfEngine", "resources", "shaders")
         if os.path.isdir(shaders_dir):
@@ -678,6 +708,10 @@ except Exception as _exc:
                         fp = os.path.join(root, fname)
                         removed_bytes += os.path.getsize(fp)
                         os.remove(fp)
+
+        # Ensure Data/Logs exists for runtime log output
+        logs_dir = os.path.join(final_dir, "Data", "Logs")
+        os.makedirs(logs_dir, exist_ok=True)
 
         mb = removed_bytes / (1024 * 1024)
         Debug.log_internal(f"Cleaned {mb:.1f} MB of redundant files from build")

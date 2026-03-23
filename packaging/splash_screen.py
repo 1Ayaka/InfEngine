@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 
 from PySide6.QtWidgets import QWidget, QApplication, QLabel, QVBoxLayout, QGraphicsDropShadowEffect, QProgressBar, QMessageBox
@@ -237,13 +238,15 @@ class EngineSplashScreen(QWidget):
 
         popen_kwargs: dict = {"cwd": project_path, "env": env}
 
-        # Always capture stderr so we can report the real error when
-        # the engine crashes.  In detached mode, suppress the console
-        # window; in dev mode, let stdout pass through for logging.
+        # Engine has its own Console panel — never inherit stdout/stderr
+        # to the launcher terminal.  stderr is piped so we can display
+        # crash messages; a background thread drains it continuously to
+        # prevent the OS pipe-buffer from filling up and deadlocking the
+        # engine process.
         popen_kwargs["stdin"] = subprocess.DEVNULL
+        popen_kwargs["stdout"] = subprocess.DEVNULL
         popen_kwargs["stderr"] = subprocess.PIPE
         if detached:
-            popen_kwargs["stdout"] = subprocess.DEVNULL
             if sys.platform == "win32":
                 flags = 0
                 flags |= getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -263,7 +266,35 @@ class EngineSplashScreen(QWidget):
             self._status.setText("Launch failed")
             QTimer.singleShot(250, self._fade_out_and_close)
             return
+
+        # Drain stderr in a background thread so the pipe buffer never
+        # fills up (which would block the engine's sys.stderr.write).
+        self._stderr_chunks: list[bytes] = []
+        self._stderr_thread = threading.Thread(
+            target=self._drain_stderr, daemon=True
+        )
+        self._stderr_thread.start()
+
         self._poll_timer.start(100)
+
+    def _drain_stderr(self):
+        """Read stderr until EOF so the pipe buffer never stalls the engine."""
+        proc = self._process
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            while True:
+                chunk = proc.stderr.read(4096)
+                if not chunk:
+                    break
+                self._stderr_chunks.append(chunk)
+        except (ValueError, OSError):
+            pass
+        finally:
+            try:
+                proc.stderr.close()
+            except Exception:
+                pass
 
     def _poll_launch_state(self):
         if self._ready_file and os.path.isfile(self._ready_file):
@@ -297,13 +328,12 @@ class EngineSplashScreen(QWidget):
 
         if self._process is not None and self._process.poll() is not None:
             # Engine exited before signalling readiness — show the error.
-            stderr_text = ""
-            try:
-                raw = self._process.stderr.read()
-                if raw:
-                    stderr_text = raw.decode("utf-8", errors="replace").strip()
-            except Exception:
-                pass
+            # Collect stderr from the drain thread's buffer.
+            if hasattr(self, '_stderr_thread'):
+                self._stderr_thread.join(timeout=2.0)
+            stderr_text = b"".join(
+                getattr(self, '_stderr_chunks', [])
+            ).decode("utf-8", errors="replace").strip()
 
             self._status.setText("Launch failed")
             self._fade_out_and_close()

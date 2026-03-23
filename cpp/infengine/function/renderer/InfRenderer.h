@@ -85,6 +85,8 @@ class InfRenderer
     void SetWindowIcon(const std::string &iconPath);
     void SetWindowFullscreen(bool fullscreen);
     void SetWindowTitle(const std::string &title);
+    void SetWindowMaximized(bool maximized);
+    void SetWindowResizable(bool resizable);
 
     // Close-request interception (delegates to InfView)
     bool IsCloseRequested() const;

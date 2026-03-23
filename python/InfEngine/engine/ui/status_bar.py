@@ -131,16 +131,23 @@ class StatusBarPanel(InfGUIRenderable):
         ctx.pop_style_color(1)
 
     def _render_content(self, ctx: InfGUIContext, disp_w: float) -> None:
-        # ── Compute region split ──────────────────────────────────────
+        # ── Compute region split (3/4 left, 1/4 right) ───────────────
         status_text, status_progress = EngineStatus.get()
         status_active = bool(status_text)
-        status_zone_w = disp_w * Theme.STATUS_PROGRESS_FRACTION if status_active else 0.0
-        left_zone_w = disp_w - status_zone_w
+        # When progress is active, strictly reserve the right 1/4 for it.
+        # Otherwise the console zone uses the full width.
+        if status_active:
+            left_zone_w = disp_w * (1.0 - Theme.STATUS_PROGRESS_FRACTION)
+        else:
+            left_zone_w = disp_w
 
-        # ── Left zone: console message + warn/error counters ─────────
-        click_w = max(left_zone_w - 150.0, 100.0)
+        bar_h = _BASE_HEIGHT * ctx.get_dpi_scale() - 8.0
+
+        # ── Left zone: clickable area → opens console ────────────────
+        # Span the entire left zone so clicks anywhere open the console.
+        click_w = max(left_zone_w - 8.0, 100.0)
         Theme.push_status_bar_button_style(ctx)  # 3 colours
-        if ctx.invisible_button("##StatusBarClick", click_w, _BASE_HEIGHT * ctx.get_dpi_scale() - 8.0):
+        if ctx.invisible_button("##StatusBarClick", click_w, bar_h):
             if self._console_panel is not None:
                 self._console_panel.select_latest_entry()
         ctx.pop_style_color(3)
@@ -161,14 +168,14 @@ class StatusBarPanel(InfGUIRenderable):
 
         # Show only the first line; truncate if still too long for the bar
         msg = self._latest_msg.split('\n', 1)[0]
-        max_chars = max(10, int((left_zone_w - 150) / 8))
+        max_chars = max(10, int((left_zone_w - 160) / 8))
         if len(msg) > max_chars:
             msg = msg[:max_chars - 1] + "…"
 
         ctx.label(icon + msg)
         ctx.pop_style_color(1)
 
-        # ── Right: warning / error counters ─────────────────────────
+        # ── Right counters (within left zone): [W] N  [E] N ─────────────
         counter_x = left_zone_w - 130.0
         if counter_x > 0:
             ctx.same_line(counter_x)

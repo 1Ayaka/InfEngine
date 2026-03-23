@@ -33,6 +33,23 @@ def _apply_if_changed(comp, field_name: str, current, new_value):
         comp._call_on_validate()
 
 
+def _get_serializable_raw_field(obj, field_name: str, default=None):
+    try:
+        data = object.__getattribute__(obj, "__dict__")
+    except Exception:
+        return default
+    if field_name in data:
+        return data[field_name]
+    try:
+        cls = object.__getattribute__(obj, "__class__")
+        meta = getattr(cls, "_serialized_fields_", {}).get(field_name)
+        if meta is not None:
+            return meta.default
+    except Exception:
+        pass
+    return default
+
+
 _font_cache = None
 _font_cache_time = 0.0
 _FONT_CACHE_TTL = 2.0  # seconds
@@ -278,7 +295,10 @@ def _render_common_position(ctx, comp):
         if canvas is None:
             ctx.label(t("ui_comp.no_canvas_context"))
         else:
-            vis_x, vis_y, vis_w, vis_h = comp.get_visual_rect(cw, ch)
+            vis = comp.get_visual_rect(cw, ch)
+            if vis is None:
+                return
+            vis_x, vis_y, vis_w, vis_h = vis
             new_x, new_y = ctx.vector2("Position", float(vis_x), float(vis_y), 1.0, section_lw)
             if float(new_x) != float(vis_x) or float(new_y) != float(vis_y):
                 _apply_visual_position(comp, float(new_x), float(new_y), canvas)
@@ -509,6 +529,8 @@ def _render_text_typography(ctx, text_comp: UIText):
         _sync_text_layout_from_ctx(ctx, text_comp)
 
     field_label(ctx, t("ui_comp.font"), section_lw)
+    font_path = str(getattr(text_comp, "font_path", "") or "")
+    font_options = _get_project_font_options()
     font_values = [value for _, value in font_options]
     font_labels = [label for label, _ in font_options]
     if font_path not in font_values and font_path:
@@ -525,18 +547,21 @@ def _render_text_typography(ctx, text_comp: UIText):
         _sync_text_layout_from_ctx(ctx, text_comp)
 
     field_label(ctx, t("ui_comp.font_size"), section_lw)
+    new_font_size = ctx.drag_float("##ui_text_font_size", text_comp.font_size, 0.5, 4.0, 1000000.0)
     target_font_size = max(4.0, min(1000000.0, float(new_font_size)))
     if not math.isclose(target_font_size, float(text_comp.font_size), rel_tol=1e-5, abs_tol=1e-6):
         _apply_if_changed(text_comp, "font_size", text_comp.font_size, target_font_size)
         _sync_text_layout_from_ctx(ctx, text_comp)
 
     field_label(ctx, t("ui_comp.line_height"), section_lw)
+    new_line_height = ctx.drag_float("##ui_text_line_height", text_comp.line_height, 0.01, 0.5, 5.0)
     target_line_height = max(0.5, min(5.0, float(new_line_height)))
     if not math.isclose(target_line_height, float(text_comp.line_height), rel_tol=1e-5, abs_tol=1e-6):
         _apply_if_changed(text_comp, "line_height", text_comp.line_height, target_line_height)
         _sync_text_layout_from_ctx(ctx, text_comp)
 
     field_label(ctx, t("ui_comp.letter_spacing"), section_lw)
+    new_letter_spacing = ctx.drag_float("##ui_text_letter_spacing", text_comp.letter_spacing, 0.1, -20.0, 100.0)
     target_letter_spacing = max(-20.0, min(100.0, float(new_letter_spacing)))
     if not math.isclose(target_letter_spacing, float(text_comp.letter_spacing), rel_tol=1e-5, abs_tol=1e-6):
         _apply_if_changed(text_comp, "letter_spacing", text_comp.letter_spacing, target_letter_spacing)
@@ -761,11 +786,13 @@ def _render_button_inspector(ctx, btn_comp: UIButton):
             _apply_if_changed(btn_comp, "label_color", cur_lc[:4], new_lc)
 
         field_label(ctx, t("ui_comp.line_height"), lw)
+        new_lh = ctx.drag_float("##btn_line_height", btn_comp.line_height, 0.01, 0.5, 5.0)
         target_lh = max(0.5, min(5.0, float(new_lh)))
         if not math.isclose(target_lh, float(btn_comp.line_height), rel_tol=1e-5, abs_tol=1e-6):
             _apply_if_changed(btn_comp, "line_height", btn_comp.line_height, target_lh)
 
         field_label(ctx, t("ui_comp.letter_spacing"), lw)
+        new_ls = ctx.drag_float("##btn_letter_spacing", btn_comp.letter_spacing, 0.1, -20.0, 100.0)
         target_ls = max(-20.0, min(100.0, float(new_ls)))
         if not math.isclose(target_ls, float(btn_comp.letter_spacing), rel_tol=1e-5, abs_tol=1e-6):
             _apply_if_changed(btn_comp, "letter_spacing", btn_comp.letter_spacing, target_ls)
@@ -897,15 +924,28 @@ def _render_on_click_events(ctx, btn_comp):
         normalize_event_arguments,
     )
 
+    def _clone_argument(arg):
+        return UIEventArgument(
+            kind=getattr(arg, "kind", "string") or "string",
+            name=getattr(arg, "name", "") or "",
+            component_type=getattr(arg, "component_type", "") or "",
+            int_value=int(getattr(arg, "int_value", 0) or 0),
+            float_value=float(getattr(arg, "float_value", 0.0) or 0.0),
+            bool_value=bool(getattr(arg, "bool_value", False)),
+            string_value=getattr(arg, "string_value", "") or "",
+            game_object=copy.deepcopy(_get_serializable_raw_field(arg, "game_object"), {}),
+            component=copy.deepcopy(_get_serializable_raw_field(arg, "component"), {}),
+        )
+
     def _clone_entry(e):
         """Clone a UIEventEntry without deepcopy (avoids pickling C++ objects)."""
-        t = getattr(e, "target", None)
-        pid = t.persistent_id if t and hasattr(t, "persistent_id") else 0
+        target_ref = _get_serializable_raw_field(e, "target")
+        pid = getattr(target_ref, "persistent_id", 0) or 0
         return UIEventEntry(
             target=GameObjectRef(persistent_id=pid),
             component_name=getattr(e, "component_name", "") or "",
             method_name=getattr(e, "method_name", "") or "",
-            arguments=[copy.deepcopy(arg) for arg in (getattr(e, "arguments", None) or [])],
+            arguments=[_clone_argument(arg) for arg in (getattr(e, "arguments", None) or [])],
         )
 
     def _clone_entries(lst):
@@ -914,9 +954,13 @@ def _render_on_click_events(ctx, btn_comp):
     entries = list(btn_comp.on_click_entries or [])
 
     def _on_add():
-        new_entries = _clone_entries(entries)
+        old_entries = list(btn_comp.on_click_entries or [])
+        new_entries = _clone_entries(old_entries)
         new_entries.append(UIEventEntry())
-        _apply_if_changed(btn_comp, "on_click_entries", entries, new_entries)
+        _record_property(btn_comp, "on_click_entries",
+                         old_entries, new_entries, "Set on_click_entries")
+        if hasattr(btn_comp, "_call_on_validate"):
+            btn_comp._call_on_validate()
 
     header_open = IGUI.list_header(
         ctx, t("ui_comp.on_click"), len(entries),
@@ -952,8 +996,8 @@ def _render_on_click_events(ctx, btn_comp):
 
         if entry_open:
             # ── Target GameObject ──
-            target_ref = getattr(entry, "target", None)
-            resolved_go = target_ref.resolve() if target_ref and hasattr(target_ref, "resolve") else None
+            target_ref = _get_serializable_raw_field(entry, "target")
+            resolved_go = target_ref.resolve() if hasattr(target_ref, "resolve") else None
             display = resolved_go.name if resolved_go else t("igui.none")
 
             def _make_drop_cb(_idx=i):
@@ -968,29 +1012,47 @@ def _render_on_click_events(ctx, btn_comp):
                     go = scene.find_by_id(obj_id)
                     if go is None:
                         return
-                    new_entries = _clone_entries(entries)
+                    old_entries = list(btn_comp.on_click_entries or [])
+                    new_entries = _clone_entries(old_entries)
+                    if _idx >= len(new_entries):
+                        return
                     new_entries[_idx].target = GameObjectRef(go)
                     new_entries[_idx].component_name = ""
                     new_entries[_idx].method_name = ""
-                    _apply_if_changed(btn_comp, "on_click_entries", entries, new_entries)
+                    _record_property(btn_comp, "on_click_entries",
+                                     old_entries, new_entries, "Set on_click_entries")
+                    if hasattr(btn_comp, "_call_on_validate"):
+                        btn_comp._call_on_validate()
                 return _on_drop
 
             def _make_pick_cb(_idx=i):
                 def _on_pick(go):
-                    new_entries = _clone_entries(entries)
+                    old_entries = list(btn_comp.on_click_entries or [])
+                    new_entries = _clone_entries(old_entries)
+                    if _idx >= len(new_entries):
+                        return
                     new_entries[_idx].target = GameObjectRef(go)
                     new_entries[_idx].component_name = ""
                     new_entries[_idx].method_name = ""
-                    _apply_if_changed(btn_comp, "on_click_entries", entries, new_entries)
+                    _record_property(btn_comp, "on_click_entries",
+                                     old_entries, new_entries, "Set on_click_entries")
+                    if hasattr(btn_comp, "_call_on_validate"):
+                        btn_comp._call_on_validate()
                 return _on_pick
 
             def _make_clear_cb(_idx=i):
                 def _on_clear():
-                    new_entries = _clone_entries(entries)
+                    old_entries = list(btn_comp.on_click_entries or [])
+                    new_entries = _clone_entries(old_entries)
+                    if _idx >= len(new_entries):
+                        return
                     new_entries[_idx].target = GameObjectRef(persistent_id=0)
                     new_entries[_idx].component_name = ""
                     new_entries[_idx].method_name = ""
-                    _apply_if_changed(btn_comp, "on_click_entries", entries, new_entries)
+                    _record_property(btn_comp, "on_click_entries",
+                                     old_entries, new_entries, "Set on_click_entries")
+                    if hasattr(btn_comp, "_call_on_validate"):
+                        btn_comp._call_on_validate()
                 return _on_clear
 
             field_label(ctx, t("ui_comp.target"), lw)
@@ -1021,6 +1083,7 @@ def _render_on_click_events(ctx, btn_comp):
                 comp_idx = 0
 
             field_label(ctx, t("ui_comp.component"), lw)
+            new_comp_idx = ctx.combo(f"##onclick_comp_{i}", comp_idx, comp_labels, -1)
             new_comp_name = comp_values[new_comp_idx] if 0 <= new_comp_idx < len(comp_values) else cur_comp_name
             if new_comp_name != cur_comp_name:
                 new_entries = _clone_entries(entries)
@@ -1050,6 +1113,7 @@ def _render_on_click_events(ctx, btn_comp):
                 method_idx = 0
 
             field_label(ctx, t("ui_comp.method"), lw)
+            new_method_idx = ctx.combo(f"##onclick_method_{i}", method_idx, method_labels, -1)
             new_method = method_values[new_method_idx] if 0 <= new_method_idx < len(method_values) else cur_method
             if new_method != cur_method:
                 new_entries = _clone_entries(entries)
@@ -1118,8 +1182,8 @@ def _render_on_click_events(ctx, btn_comp):
                                     current_args = list(new_entries[i].arguments or [])
                                     changed = True
                             elif kind == "game_object":
-                                target_ref = getattr(arg, "game_object", None)
-                                resolved_arg_go = target_ref.resolve() if target_ref and hasattr(target_ref, "resolve") else None
+                                target_ref = _get_serializable_raw_field(arg, "game_object")
+                                resolved_arg_go = target_ref.resolve() if hasattr(target_ref, "resolve") else None
                                 display = resolved_arg_go.name if resolved_arg_go else t("igui.none")
 
                                 def _make_arg_go_drop_cb(_entry_idx=i, _arg_idx=arg_index):
@@ -1164,7 +1228,7 @@ def _render_on_click_events(ctx, btn_comp):
                                     on_clear=_make_arg_go_clear_cb(),
                                 )
                             elif kind == "component":
-                                comp_ref = getattr(arg, "component", None)
+                                comp_ref = _get_serializable_raw_field(arg, "component")
                                 display = comp_ref.display_name if isinstance(comp_ref, ComponentRef) else t("igui.none")
                                 type_hint = spec.component_type or "Component"
 
@@ -1234,8 +1298,12 @@ def _render_on_click_events(ctx, btn_comp):
         ctx.pop_id()
 
     if remove_index is not None:
-        new_entries = [_clone_entry(e) for j, e in enumerate(entries) if j != remove_index]
-        _apply_if_changed(btn_comp, "on_click_entries", entries, new_entries)
+        old_entries = list(btn_comp.on_click_entries or [])
+        new_entries = [_clone_entry(e) for j, e in enumerate(old_entries) if j != remove_index]
+        _record_property(btn_comp, "on_click_entries",
+                         old_entries, new_entries, "Set on_click_entries")
+        if hasattr(btn_comp, "_call_on_validate"):
+            btn_comp._call_on_validate()
 
 
 register_py_component_renderer("UIButton", _render_button_inspector)

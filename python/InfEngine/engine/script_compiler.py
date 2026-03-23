@@ -157,7 +157,7 @@ class ScriptCompiler:
         
         if not errors:
             # Optionally log success
-            Debug.log_internal(f"✓ Script compiled: {os.path.basename(file_path)}")
+            Debug.log_internal(f"[OK] Script compiled: {os.path.basename(file_path)}")
             return True
         
         # Report errors

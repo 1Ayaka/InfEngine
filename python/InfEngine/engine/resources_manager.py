@@ -246,7 +246,7 @@ class ResourceChangeHandler(FileSystemEventHandler):
         else:
             from InfEngine.components.script_loader import _clear_script_error
             _clear_script_error(file_path)
-            Debug.log_internal(f"✓ Script OK: {os.path.basename(file_path)}")
+            Debug.log_internal(f"[OK] Script OK: {os.path.basename(file_path)}")
             rm = ResourcesManager.instance()
             if rm is not None:
                 rm.notify_script_catalog_changed(file_path, "modified")
@@ -277,12 +277,12 @@ class ResourceChangeHandler(FileSystemEventHandler):
         if hasattr(self._engine, 'reload_shader'):
             result = self._engine.reload_shader(file_path)
             if not result:  # empty string = success
-                Debug.log_internal(f"✓ Shader reloaded: {os.path.basename(file_path)}")
+                Debug.log_internal(f"[OK] Shader reloaded: {os.path.basename(file_path)}")
                 # Bump property generation so inspectors re-sync @property annotations
                 from InfEngine.engine.ui import inspector_shader_utils as _su
                 _su.bump_shader_property_generation()
             else:
-                Debug.log_error(f"✗ Shader compile error ({os.path.basename(file_path)}):\n{result}")
+                Debug.log_error(f"[ERROR] Shader compile error ({os.path.basename(file_path)}):\n{result}")
         else:
             Debug.log_warning("Engine does not support shader hot-reload yet")
     
@@ -370,10 +370,51 @@ class ResourcesManager:
             self._observer.schedule(self._event_handler, self._assets_path, recursive=True)
             self._observer.start()
 
+            # Initial full scan: check every .py file in Assets/ so that
+            # pre-existing script errors are detected on engine startup.
+            self._initial_script_scan()
+
             while not self._stop_event.is_set():
                 self._stop_event.wait(timeout=0.25)  # wake quickly on shutdown
         finally:
             self._shutdown_observer(join_timeout=5.0)
+
+    def _initial_script_scan(self):
+        """Walk Assets/ and syntax-check every .py file.
+
+        Called once from the watchdog thread right after the observer
+        starts so that errors present *before* the engine was opened
+        are detected immediately.
+        """
+        from InfEngine.engine.script_compiler import get_script_compiler
+        from InfEngine.components.script_loader import set_script_error, _clear_script_error
+
+        compiler = get_script_compiler()
+        error_count = 0
+        for root, dirs, files in os.walk(self._assets_path):
+            dirs[:] = [d for d in dirs if d != '__pycache__']
+            for fname in files:
+                if not fname.endswith('.py'):
+                    continue
+                fpath = os.path.join(root, fname)
+                errors = compiler.check_file(fpath)
+                if errors:
+                    combined = "\n".join(
+                        f"{os.path.basename(e.file_path)}:{e.line_number}  {e.message}"
+                        for e in errors
+                    )
+                    set_script_error(fpath, combined)
+                    error_count += 1
+                    for e in errors:
+                        Debug.log_error(
+                            f"Script Error in {os.path.basename(e.file_path)}:{e.line_number}\n{e.message}",
+                            source_file=e.file_path,
+                            source_line=e.line_number,
+                        )
+        if error_count:
+            Debug.log_warning(f"Startup scan: {error_count} script(s) with errors")
+        else:
+            Debug.log_internal("\u2713 All scripts passed startup validation")
 
     def process_pending_reloads(self):
         """Process pending script reloads in main thread. Call this from update loop."""

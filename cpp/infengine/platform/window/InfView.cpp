@@ -163,6 +163,28 @@ void InfView::SetWindowTitle(const std::string &title)
     }
 }
 
+void InfView::SetWindowMaximized(bool maximized)
+{
+    if (!m_window) {
+        INFLOG_ERROR("Cannot set maximized: window not initialized.");
+        return;
+    }
+    if (maximized) {
+        SDL_MaximizeWindow(m_window);
+    } else {
+        SDL_RestoreWindow(m_window);
+    }
+}
+
+void InfView::SetWindowResizable(bool resizable)
+{
+    if (!m_window) {
+        INFLOG_ERROR("Cannot set resizable: window not initialized.");
+        return;
+    }
+    SDL_SetWindowResizable(m_window, resizable);
+}
+
 void InfView::SDLInit()
 {
     SDL_SetLogPriorities(SDL_LOG_PRIORITY_VERBOSE);

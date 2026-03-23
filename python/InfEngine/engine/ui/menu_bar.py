@@ -68,7 +68,7 @@ class MenuBarPanel(InfGUIRenderable):
         ctx.push_style_var_vec2(ImGuiStyleVar.FramePadding, *Theme.TOOLBAR_FRAME_PAD)
         ctx.push_style_var_vec2(ImGuiStyleVar.ItemSpacing, *Theme.TOOLBAR_ITEM_SPC)
         ctx.push_style_var_vec2(ImGuiStyleVar.WindowPadding, *Theme.TOOLBAR_WIN_PAD)
-        ctx.push_style_color(ImGuiCol.MenuBarBg, *Theme.WINDOW_BG)
+        ctx.push_style_color(ImGuiCol.MenuBarBg, *Theme.MENU_BAR_BG)
         ctx.push_style_color(ImGuiCol.PopupBg, *Theme.POPUP_BG)
         ctx.push_style_color(ImGuiCol.HeaderHovered, *Theme.HEADER_HOVERED)
         ctx.push_style_color(ImGuiCol.HeaderActive, *Theme.HEADER_ACTIVE)

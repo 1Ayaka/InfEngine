@@ -90,12 +90,21 @@ endif()
 # GLM: Use left-handed coordinate system (Unity convention: X+=right, Y+=up, Z+=forward)
 target_compile_definitions(_InfEngine PRIVATE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_LEFT_HANDED)
 
-# Enable frame profiling instrumentation in Debug (RelWithDebInfo) builds.
+# Enable frame profiling instrumentation only in RelWithDebInfo builds.
 # Terminal output (stderr) is OFF by default — enable with -DINFENGINE_FRAME_PROFILE_TERMINAL=1
 # at CMake configure time if you need per-window dumps in the console.
+#
+# File logging is independent from profiling:
+# - Debug / RelWithDebInfo: truncate Logs/engine.log on startup and write through.
+# - Release / MinSizeRel: keep only the last 100 log lines in memory and write them on exit.
 target_compile_definitions(_InfEngine PRIVATE
     $<$<CONFIG:RelWithDebInfo>:INFENGINE_FRAME_PROFILE=1>
+    $<$<CONFIG:Debug>:INFENGINE_FILE_LOGGING=1>
     $<$<CONFIG:RelWithDebInfo>:INFENGINE_FILE_LOGGING=1>
+    $<$<CONFIG:Release>:INFENGINE_FILE_LOGGING=1>
+    $<$<CONFIG:MinSizeRel>:INFENGINE_FILE_LOGGING=1>
+    $<$<CONFIG:Release>:INFENGINE_DEFERRED_FILE_LOGGING=1>
+    $<$<CONFIG:MinSizeRel>:INFENGINE_DEFERRED_FILE_LOGGING=1>
 )
 
 target_link_libraries(_InfEngine PRIVATE

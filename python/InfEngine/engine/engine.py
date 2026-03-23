@@ -389,6 +389,16 @@ class Engine():
         if self._engine:
             self._engine.set_window_title(title)
 
+    def set_maximized(self, maximized: bool):
+        """Maximize or restore the window."""
+        if self._engine:
+            self._engine.set_maximized(maximized)
+
+    def set_resizable(self, resizable: bool):
+        """Enable or disable window resizing."""
+        if self._engine:
+            self._engine.set_resizable(resizable)
+
     def set_present_mode(self, mode: int):
         """Set swapchain present mode: 0=IMMEDIATE, 1=MAILBOX, 2=FIFO, 3=FIFO_RELAXED."""
         if self._engine:

@@ -34,6 +34,8 @@ class SplashPlayer:
 
         # GPU texture currently displayed
         self._tex_id: int = 0
+        self._img_w: int = 0
+        self._img_h: int = 0
 
         # Video state
         self._vfile = None
@@ -76,11 +78,13 @@ class SplashPlayer:
                 self._vlast_frame = target
                 self._upload_video_frame(native_engine, target)
 
-        # Render
+        # Render (scale-to-fill, preserving aspect ratio)
         if self._tex_id:
+            rx, ry, rw, rh = self._cover_rect(
+                vp_w, vp_h, self._img_w, self._img_h)
             ctx.draw_image_rect(
                 self._tex_id,
-                x0, y0, x0 + vp_w, y0 + vp_h,
+                x0 + rx, y0 + ry, x0 + rx + rw, y0 + ry + rh,
                 0.0, 0.0, 1.0, 1.0,        # uv
                 1.0, 1.0, 1.0, alpha,       # tint RGBA
             )
@@ -109,6 +113,20 @@ class SplashPlayer:
         return item.get("duration", 3.0)
 
     @staticmethod
+    def _cover_rect(vp_w: float, vp_h: float,
+                    img_w: int, img_h: int):
+        """Return (x, y, w, h) that scales the image to *cover* the viewport
+        while preserving aspect ratio (like CSS background-size: cover)."""
+        if img_w <= 0 or img_h <= 0 or vp_w <= 0 or vp_h <= 0:
+            return (0.0, 0.0, vp_w, vp_h)
+        scale = max(vp_w / img_w, vp_h / img_h)
+        w = img_w * scale
+        h = img_h * scale
+        x = (vp_w - w) * 0.5
+        y = (vp_h - h) * 0.5
+        return (x, y, w, h)
+
+    @staticmethod
     def _alpha(elapsed: float, duration: float,
                fade_in: float, fade_out: float) -> float:
         if elapsed < fade_in:
@@ -135,6 +153,8 @@ class SplashPlayer:
         td = TextureLoader.load_from_file(path)
         if not td.is_valid():
             return
+        self._img_w = td.width
+        self._img_h = td.height
         self._tex_id = native_engine.upload_texture_for_imgui(
             self._TEX_NAME, td.get_pixels_list(), td.width, td.height,
         )
@@ -151,6 +171,8 @@ class SplashPlayer:
 
         hdr = f.read(16)
         count, self._vfps, _w, _h = struct.unpack("<IfII", hdr)
+        self._img_w = _w
+        self._img_h = _h
 
         idx_data = f.read(count * 8)
         self._vindex = [

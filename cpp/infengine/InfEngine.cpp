@@ -181,6 +181,11 @@ void InfEngine::Cleanup()
     m_assetDatabase.reset();
     m_extLoader.reset();
 
+    INFLOG_DEBUG("Cleanup completed.");
+#if INFENGINE_FILE_LOGGING
+    INFLOG_FLUSH_FILE();
+#endif
+
     m_isCleanedUp = true;
     m_isCleaningUp = false;
 }
@@ -199,13 +204,19 @@ void InfEngine::InitRenderer(int width, int height, const std::string &projectPa
 
     m_renderer->Init(width, height, m_metadata);
 
-    // In debug builds, redirect log output to Logs/engine.log
+    // Redirect log output to Logs/engine.log.
+    // Debug / RelWithDebInfo: truncate on startup and write through.
+    // Release: retain only the last 100 lines and dump them on exit.
 #if INFENGINE_FILE_LOGGING
     {
         auto logsDir = ToFsPath(JoinPath({projectPath, "Logs"}));
         std::filesystem::create_directories(logsDir);
         auto logFile = logsDir / "engine.log";
+#if INFENGINE_DEFERRED_FILE_LOGGING
+        INFLOG_SET_DEFERRED_FILE(FromFsPath(logFile), 100);
+#else
         INFLOG_SET_FILE(FromFsPath(logFile));
+#endif
     }
 #endif
 

@@ -74,6 +74,23 @@ class UIEventArgument(SerializableObject):
 UIEventEntry._serialized_fields_["arguments"].element_class = UIEventArgument
 
 
+def _get_serializable_raw_field(obj, field_name: str, default=None):
+    try:
+        data = object.__getattribute__(obj, "__dict__")
+    except Exception:
+        return default
+    if field_name in data:
+        return data[field_name]
+    try:
+        cls = object.__getattribute__(obj, "__class__")
+        meta = getattr(cls, "_serialized_fields_", {}).get(field_name)
+        if meta is not None:
+            return meta.default
+    except Exception:
+        pass
+    return default
+
+
 @dataclass(frozen=True)
 class UIEventMethodParameter:
     name: str
@@ -244,9 +261,11 @@ def materialize_event_arguments(entry: UIEventEntry, component) -> list[Any]:
         elif spec.kind == "float":
             values.append(float(arg.float_value))
         elif spec.kind == "game_object":
-            values.append(arg.game_object.resolve() if getattr(arg, "game_object", None) else None)
+            game_object_ref = _get_serializable_raw_field(arg, "game_object")
+            values.append(game_object_ref.resolve() if hasattr(game_object_ref, "resolve") else game_object_ref)
         elif spec.kind == "component":
-            values.append(arg.component.resolve() if getattr(arg, "component", None) else None)
+            component_ref = _get_serializable_raw_field(arg, "component")
+            values.append(component_ref.resolve() if hasattr(component_ref, "resolve") else component_ref)
         else:
             values.append(str(arg.string_value or ""))
     return values

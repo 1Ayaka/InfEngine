@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -27,6 +28,14 @@ from InfEngine.debug import Debug
 # ASCII-safe root for Nuitka staging (avoids MinGW std::filesystem crash
 # on non-ASCII characters in TEMP / user-profile paths).
 _STAGING_ROOT = "C:\\_InfBuild"
+
+# Persistent Nuitka compilation cache — lives outside the per-build staging
+# directory so it survives across builds, dramatically speeding up rebuilds.
+_NUITKA_CACHE_DIR = os.path.join(_STAGING_ROOT, "_nuitka_cache")
+
+
+class _BuildCancelled(Exception):
+    """Raised when the user cancels the build."""
 
 
 class NuitkaBuilder:
@@ -66,10 +75,13 @@ class NuitkaBuilder:
     def build(
         self,
         on_progress: Optional[Callable[[str, float], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> str:
         """Run Nuitka compilation.  Returns the dist directory path."""
 
         def _p(msg: str, pct: float):
+            if cancel_event is not None and cancel_event.is_set():
+                raise _BuildCancelled()
             if on_progress:
                 on_progress(msg, pct)
             Debug.log_internal(f"[NuitkaBuilder {pct:.0%}] {msg}")
@@ -85,7 +97,7 @@ class NuitkaBuilder:
         _p(f"命令: {' '.join(cmd)}", 0.05)
 
         _p("执行 Nuitka 编译 Running Nuitka compilation...", 0.10)
-        dist_dir = self._run_nuitka(cmd, on_progress)
+        dist_dir = self._run_nuitka(cmd, on_progress, cancel_event)
 
         _p("注入原生引擎库 Injecting native engine libraries...", 0.85)
         self._inject_native_libs(dist_dir)
@@ -189,7 +201,6 @@ class NuitkaBuilder:
                 cmd.append("--msvc=latest")
             else:
                 cmd.append("--mingw64")
-                cmd.append("--disable-ccache")
 
         # Link-time optimization for smaller and faster binaries
         cmd.append("--lto=yes")
@@ -261,6 +272,7 @@ class NuitkaBuilder:
         self,
         cmd: List[str],
         on_progress: Optional[Callable[[str, float], None]],
+        cancel_event: Optional[threading.Event] = None,
     ) -> str:
         """Run Nuitka as a subprocess and stream output.  Returns dist dir."""
         env = os.environ.copy()
@@ -271,9 +283,10 @@ class NuitkaBuilder:
         os.makedirs(safe_tmp, exist_ok=True)
         env["TEMP"] = safe_tmp
         env["TMP"] = safe_tmp
-        env["NUITKA_CACHE_DIR"] = os.path.join(self._staging_dir, "_cache")
-        # Belt-and-suspenders: also disable ccache via env var
-        env["CCACHE_DISABLE"] = "1"
+        # Use a persistent cache directory so Nuitka can reuse compiled C
+        # code across builds — this is the single biggest speed win.
+        os.makedirs(_NUITKA_CACHE_DIR, exist_ok=True)
+        env["NUITKA_CACHE_DIR"] = _NUITKA_CACHE_DIR
 
         proc = subprocess.Popen(
             cmd,
@@ -287,13 +300,20 @@ class NuitkaBuilder:
         )
 
         lines_collected: List[str] = []
-        for line in proc.stdout:
-            line = line.rstrip()
-            lines_collected.append(line)
-            if on_progress:
-                # Crude progress: Nuitka logs many lines; we map to 10%–85%
-                pct = min(0.85, 0.10 + len(lines_collected) * 0.001)
-                on_progress(line[-80:] if len(line) > 80 else line, pct)
+        try:
+            for line in proc.stdout:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise _BuildCancelled()
+                line = line.rstrip()
+                lines_collected.append(line)
+                if on_progress:
+                    # Crude progress: Nuitka logs many lines; we map to 10%–85%
+                    pct = min(0.85, 0.10 + len(lines_collected) * 0.001)
+                    on_progress(line[-80:] if len(line) > 80 else line, pct)
+        except _BuildCancelled:
+            proc.kill()
+            proc.wait()
+            raise
 
         proc.wait()
 

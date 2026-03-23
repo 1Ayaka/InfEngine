@@ -6,6 +6,7 @@ Pure utilities are in ``project_utils``.
 """
 
 import os
+import ctypes
 import shutil
 import threading
 from InfEngine.lib import InfGUIContext, TextureLoader, InputManager
@@ -312,7 +313,8 @@ class ProjectPanel(EditorPanel):
         self.__rename_focus_requested = False
 
         # Clipboard state (copy/cut)
-        self.__clipboard_path = None   # Path of copied/cut file
+        self.__clipboard_path = None   # Primary path of copied/cut selection
+        self.__clipboard_paths: list[str] = []
         self.__clipboard_is_cut = False
 
         # Model asset expansion state: path -> expanded bool
@@ -351,13 +353,31 @@ class ProjectPanel(EditorPanel):
     def set_on_file_selected(self, callback):
         self.__on_file_selected = callback
 
+    def _notify_selection_changed(self):
+        if not self.__on_file_selected:
+            return
+        if len(self.__selected_files) == 1:
+            self.__on_file_selected(self.__selected_files[0])
+        else:
+            self.__on_file_selected(None)
+
+    def _get_selected_paths(self) -> list[str]:
+        paths = [p for p in self.__selected_files if p and os.path.exists(p)]
+        if paths:
+            return paths
+        if self.__selected_file and os.path.exists(self.__selected_file):
+            return [self.__selected_file]
+        return []
+
+    def _has_clipboard_items(self) -> bool:
+        return any(os.path.exists(path) for path in self.__clipboard_paths)
+
     def clear_selection(self):
         """Clear current file selection and notify listeners."""
         if self.__selected_file is not None or self.__selected_files:
             self.__selected_file = None
             self.__selected_files.clear()
-            if self.__on_file_selected:
-                self.__on_file_selected(None)
+            self._notify_selection_changed()
     
     def set_on_file_double_click(self, callback):
         self.__on_file_double_click = callback
@@ -617,15 +637,46 @@ class ProjectPanel(EditorPanel):
         return result
 
     def _delete_item(self, item_path: str):
-        file_ops.delete_item(item_path, self.__asset_database)
+        self._delete_items([item_path])
+
+    def _delete_items(self, item_paths: list[str]):
+        paths = []
+        seen = set()
+        for path in item_paths or []:
+            if not path or not os.path.exists(path) or path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+        if not paths:
+            return
+
+        title = t("project.delete_confirm_title")
+        if len(paths) == 1:
+            msg = t("project.delete_confirm_msg").replace("{name}", os.path.basename(paths[0]))
+        else:
+            msg = t("project.delete_confirm_multi_msg").replace("{count}", str(len(paths)))
+        # MB_OKCANCEL (1) | MB_ICONWARNING (0x30) | MB_DEFBUTTON2 (0x100)
+        # IDOK = 1
+        result = ctypes.windll.user32.MessageBoxW(0, msg, title, 0x1 | 0x30 | 0x100)
+        if result != 1:
+            return
+
+        deleted = False
+        for item_path in sorted(paths, key=lambda p: (p.count(os.sep), len(p)), reverse=True):
+            if not os.path.exists(item_path):
+                continue
+            file_ops.delete_item(item_path, self.__asset_database)
+            deleted = True
+            self.__thumbnail_cache.pop(item_path, None)
+
+        if not deleted:
+            return
+
         self._invalidate_dir_cache()
-        if self.__selected_file == item_path:
+        if any(path in self.__selected_files for path in paths) or self.__selected_file in paths:
             self.__selected_file = None
             self.__selected_files.clear()
-            if self.__on_file_selected:
-                self.__on_file_selected(None)
-        if item_path in self.__thumbnail_cache:
-            del self.__thumbnail_cache[item_path]
+            self._notify_selection_changed()
     
     def _should_show(self, name: str) -> bool:
         return project_utils.should_show(name)
@@ -756,49 +807,65 @@ class ProjectPanel(EditorPanel):
 
     # ── clipboard helpers ────────────────────────────────────────────────
 
-    def _clipboard_copy(self, path: str):
-        self.__clipboard_path = path
+    def _clipboard_copy(self, paths):
+        if isinstance(paths, str):
+            paths = [paths]
+        self.__clipboard_paths = [p for p in paths or [] if p and os.path.exists(p)]
+        self.__clipboard_path = self.__clipboard_paths[0] if self.__clipboard_paths else None
         self.__clipboard_is_cut = False
 
-    def _clipboard_cut(self, path: str):
-        self.__clipboard_path = path
+    def _clipboard_cut(self, paths):
+        if isinstance(paths, str):
+            paths = [paths]
+        self.__clipboard_paths = [p for p in paths or [] if p and os.path.exists(p)]
+        self.__clipboard_path = self.__clipboard_paths[0] if self.__clipboard_paths else None
         self.__clipboard_is_cut = True
 
     def _clipboard_paste(self):
         """Paste the clipboard file/folder into the current directory."""
-        src = self.__clipboard_path
-        if not src or not os.path.exists(src):
+        sources = [p for p in self.__clipboard_paths if os.path.exists(p)]
+        if not sources:
+            self.__clipboard_paths = []
             self.__clipboard_path = None
             return
-        name = os.path.basename(src)
-        dst = os.path.join(self.__current_path, name)
-        # Avoid overwriting — generate unique name
-        if os.path.exists(dst) and os.path.abspath(src) != os.path.abspath(dst):
-            base, ext = os.path.splitext(name)
-            if os.path.isdir(src):
-                ext = ""
-                base = name
-            dst_name = file_ops.get_unique_name(self.__current_path, base, ext)
-            dst = os.path.join(self.__current_path, dst_name + ext)
-        if self.__clipboard_is_cut:
-            try:
-                shutil.move(src, dst)
-            except OSError:
-                return
-            self.__clipboard_path = None
-        else:
-            try:
+
+        pasted_paths = []
+        for src in sources:
+            name = os.path.basename(src)
+            dst = os.path.join(self.__current_path, name)
+            if os.path.abspath(src) == os.path.abspath(dst):
+                if self.__clipboard_is_cut:
+                    continue
+            elif os.path.exists(dst):
+                base, ext = os.path.splitext(name)
                 if os.path.isdir(src):
+                    ext = ""
+                    base = name
+                dst_name = file_ops.get_unique_name(self.__current_path, base, ext)
+                dst = os.path.join(self.__current_path, dst_name + ext)
+
+            try:
+                if self.__clipboard_is_cut:
+                    shutil.move(src, dst)
+                elif os.path.isdir(src):
                     shutil.copytree(src, dst)
                 else:
                     shutil.copy2(src, dst)
             except OSError:
-                return
+                continue
+            pasted_paths.append(dst)
+
+        if not pasted_paths:
+            return
+
+        if self.__clipboard_is_cut:
+            self.__clipboard_paths = []
+            self.__clipboard_path = None
+
         self._invalidate_dir_cache()
-        self.__selected_file = dst
-        self.__selected_files = [dst]
-        if self.__on_file_selected:
-            self.__on_file_selected(dst)
+        self.__selected_files = pasted_paths
+        self.__selected_file = pasted_paths[-1] if len(pasted_paths) == 1 else pasted_paths[-1]
+        self._notify_selection_changed()
 
     # ── external file drop (from Windows Explorer) ───────────────────────
 
@@ -868,8 +935,7 @@ class ProjectPanel(EditorPanel):
             else:
                 self.__selected_files.append(path)
                 self.__selected_file = path
-            if self.__on_file_selected:
-                self.__on_file_selected(self.__selected_file)
+            self._notify_selection_changed()
             return
         elif shift and not double_clicked and self.__selected_file and hasattr(self, '_visible_items'):
             # Shift+click: range select from last selected to current
@@ -883,15 +949,13 @@ class ProjectPanel(EditorPanel):
             except ValueError:
                 self.__selected_files = [path]
                 self.__selected_file = path
-            if self.__on_file_selected:
-                self.__on_file_selected(self.__selected_file)
+            self._notify_selection_changed()
             return
 
         # Normal click (no modifier): single-select
         self.__selected_files = [path]
         self.__selected_file = path
-        if self.__on_file_selected:
-            self.__on_file_selected(self.__selected_file)
+        self._notify_selection_changed()
         
         if item['type'] == 'dir':
             if double_clicked:
@@ -945,13 +1009,15 @@ class ProjectPanel(EditorPanel):
                     self._reveal_in_file_explorer(self.__selected_file)
                 ctx.separator()
                 if ctx.selectable(t("project.copy"), False, 0, 0, 0):
-                    self._clipboard_copy(self.__selected_file)
+                    self._clipboard_copy(self._get_selected_paths())
                 if ctx.selectable(t("project.cut"), False, 0, 0, 0):
-                    self._clipboard_cut(self.__selected_file)
-                if self.__clipboard_path and os.path.exists(self.__clipboard_path):
+                    self._clipboard_cut(self._get_selected_paths())
+                if self._has_clipboard_items():
                     if ctx.selectable(t("project.paste"), False, 0, 0, 0):
                         self._clipboard_paste()
                 ctx.separator()
+                can_rename = len(self._get_selected_paths()) == 1
+                ctx.begin_disabled(not can_rename)
                 if ctx.selectable(t("project.rename"), False, 0, 0, 0):
                     self.__renaming_path = self.__selected_file
                     name = os.path.basename(self.__selected_file)
@@ -959,14 +1025,15 @@ class ProjectPanel(EditorPanel):
                         name = os.path.splitext(name)[0]
                     self.__renaming_name = name
                     self.__rename_focus_requested = True
+                ctx.end_disabled()
                 if ctx.selectable(t("project.delete"), False, 0, 0, 0):
-                    self._delete_item(self.__selected_file)
+                    self._delete_items(self._get_selected_paths())
             else:
                 # No item selected — still offer paste & reveal on folder
                 ctx.separator()
                 if ctx.selectable(t("project.reveal_in_explorer"), False, 0, 0, 0):
                     self._reveal_in_file_explorer(self.__current_path)
-                if self.__clipboard_path and os.path.exists(self.__clipboard_path):
+                if self._has_clipboard_items():
                     if ctx.selectable(t("project.paste"), False, 0, 0, 0):
                         self._clipboard_paste()
             
@@ -1093,10 +1160,11 @@ class ProjectPanel(EditorPanel):
                                         })
                         items = _augmented
 
-                    # Back button
-                    if self.__current_path != self.__root_path:
+                    # Back button — stop at direct children of root (Assets, Logs, etc.)
+                    parent = os.path.dirname(self.__current_path)
+                    if self.__current_path != self.__root_path and parent != self.__root_path:
                         if ctx.selectable("[..]", False):
-                            self.__current_path = os.path.dirname(self.__current_path)
+                            self.__current_path = parent
 
                     # Grid config
                     icon_size = 64
@@ -1111,9 +1179,11 @@ class ProjectPanel(EditorPanel):
                         ctx.label(t("project.right_click_hint"))
 
                     # Handle F2 for rename, Delete, Ctrl+C/X/V
-                    if self.__selected_file and not self.__renaming_path:
+                    selected_paths = self._get_selected_paths()
+                    single_selected = len(selected_paths) == 1 and self.__selected_file and os.path.exists(self.__selected_file)
+                    if selected_paths and not self.__renaming_path:
                         ctrl = ctx.is_key_down(KEY_LEFT_CTRL) or ctx.is_key_down(KEY_RIGHT_CTRL)
-                        if ctx.is_key_pressed(KEY_F2):
+                        if ctx.is_key_pressed(KEY_F2) and single_selected:
                             self.__renaming_path = self.__selected_file
                             name = os.path.basename(self.__selected_file)
                             if os.path.isfile(self.__renaming_path):
@@ -1121,14 +1191,14 @@ class ProjectPanel(EditorPanel):
                             self.__renaming_name = name
                             self.__rename_focus_requested = True
                         elif ctx.is_key_pressed(KEY_DELETE):
-                            self._delete_item(self.__selected_file)
+                            self._delete_items(selected_paths)
                         elif ctrl and ctx.is_key_pressed(KEY_C):
-                            self._clipboard_copy(self.__selected_file)
+                            self._clipboard_copy(selected_paths)
                         elif ctrl and ctx.is_key_pressed(KEY_X):
-                            self._clipboard_cut(self.__selected_file)
+                            self._clipboard_cut(selected_paths)
                         elif ctrl and ctx.is_key_pressed(KEY_V):
                             self._clipboard_paste()
-                    elif not self.__selected_file and not self.__renaming_path:
+                    elif not selected_paths and not self.__renaming_path:
                         ctrl = ctx.is_key_down(KEY_LEFT_CTRL) or ctx.is_key_down(KEY_RIGHT_CTRL)
                         if ctrl and ctx.is_key_pressed(KEY_V):
                             self._clipboard_paste()
@@ -1171,11 +1241,8 @@ class ProjectPanel(EditorPanel):
                                 # Render clickable icon image
                                 # Zero out FramePadding so the image is centered in the cell
                                 ctx.push_style_var_vec2(ImGuiStyleVar.FramePadding, *Theme.ICON_BTN_NO_PAD)
-                                # Remove border on unselected items, highlight selected
-                                if is_selected:
-                                    Theme.push_selected_icon_style(ctx)  # 2 colours
-                                else:
-                                    Theme.push_unselected_icon_style(ctx)  # 2 colours + 1 var
+                                # Always draw as ghost button (transparent bg) so icon is clean
+                                Theme.push_unselected_icon_style(ctx)  # 2 colours + 1 var
                                 if ctx.image_button(f"##icon_{item_path}", display_tex_id, icon_size, icon_size):
                                     self._handle_item_click(item, ctx)
                                 # Right-click on item → select it (so context menu acts on it)
@@ -1183,13 +1250,16 @@ class ProjectPanel(EditorPanel):
                                     self.__selected_file = item_path
                                     if item_path not in self.__selected_files:
                                         self.__selected_files = [item_path]
-                                    if self.__on_file_selected:
-                                        self.__on_file_selected(self.__selected_file)
+                                    self._notify_selection_changed()
+                                # Draw selection overlay ON TOP of the icon
                                 if is_selected:
-                                    ctx.pop_style_color(2)
-                                else:
-                                    ctx.pop_style_color(2)
-                                    ctx.pop_style_var(1)  # FrameBorderSize
+                                    rx0 = ctx.get_item_rect_min_x()
+                                    ry0 = ctx.get_item_rect_min_y()
+                                    rx1 = ctx.get_item_rect_max_x()
+                                    ry1 = ctx.get_item_rect_max_y()
+                                    ctx.draw_filled_rect(rx0, ry0, rx1, ry1, *Theme.BTN_SELECTED, 0.0)
+                                ctx.pop_style_color(2)
+                                ctx.pop_style_var(1)  # FrameBorderSize
                                 ctx.pop_style_var(1)  # FramePadding
                             else:
                                 # Ultimate fallback — text label (only when icon PNGs are missing)
@@ -1201,8 +1271,7 @@ class ProjectPanel(EditorPanel):
                                     self.__selected_file = item_path
                                     if item_path not in self.__selected_files:
                                         self.__selected_files = [item_path]
-                                    if self.__on_file_selected:
-                                        self.__on_file_selected(self.__selected_file)
+                                    self._notify_selection_changed()
 
                             # Drag-drop sources (map-driven)
                             if item_type == 'file':

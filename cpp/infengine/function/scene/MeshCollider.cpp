@@ -4,8 +4,8 @@
  */
 
 // Jolt/Jolt.h MUST be the very first include in this TU
-#include <Jolt/Geometry/ConvexHullBuilder.h>
 #include <Jolt/Jolt.h>
+#include <Jolt/Geometry/ConvexHullBuilder.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
@@ -20,6 +20,7 @@
 
 #include <core/log/InfLog.h>
 #include <nlohmann/json.hpp>
+#include <cfloat>
 #include <unordered_map>
 
 namespace infengine
@@ -100,6 +101,60 @@ static void CookMeshGeometry(std::vector<glm::vec3> &vertices, std::vector<uint3
     }
 
     indices = std::move(clean);
+}
+
+// ---------------------------------------------------------------------------
+// Winding-order correction for Jolt MeshShape (CCW = outward-facing front).
+//
+// Uses the signed-volume heuristic (divergence theorem): for a *closed* mesh,
+// positive signed volume ⇒ CCW-outward winding; negative ⇒ winding is
+// inverted.  For near-planar / open meshes the signed volume is tiny, so we
+// fall back to checking the scale determinant (negative ⇒ odd number of axis
+// reflections which flips winding).
+// ---------------------------------------------------------------------------
+static void EnsureOutwardWinding(std::vector<glm::vec3> &vertices,
+                                 std::vector<uint32_t>  &indices,
+                                 const glm::vec3        &worldScale)
+{
+    if (indices.size() < 3)
+        return;
+
+    // Compute signed volume × 6 in double precision (already-scaled vertices).
+    double signedVol6 = 0.0;
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        const glm::dvec3 a(vertices[indices[i]]);
+        const glm::dvec3 b(vertices[indices[i + 1]]);
+        const glm::dvec3 c(vertices[indices[i + 2]]);
+        signedVol6 += glm::dot(a, glm::cross(b, c));
+    }
+
+    // Compare against AABB volume to decide whether the mesh has enough
+    // "closed" volume for the heuristic to be reliable.
+    glm::vec3 mn(FLT_MAX), mx(-FLT_MAX);
+    for (const auto &v : vertices) {
+        mn = glm::min(mn, v);
+        mx = glm::max(mx, v);
+    }
+    double aabbVol = static_cast<double>(mx.x - mn.x) *
+                     static_cast<double>(mx.y - mn.y) *
+                     static_cast<double>(mx.z - mn.z);
+
+    bool needFlip = false;
+    if (std::abs(signedVol6) > aabbVol * 0.01) {
+        // Mesh has enough closed volume — trust the signed-volume test.
+        needFlip = (signedVol6 < 0.0);
+    } else {
+        // Flat / open mesh — fall back to scale-determinant check.
+        needFlip = (worldScale.x * worldScale.y * worldScale.z < 0.0f);
+    }
+
+    if (needFlip) {
+        for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+            std::swap(indices[i + 1], indices[i + 2]);
+        }
+        INFLOG_INFO("MeshCollider: flipped triangle winding (signed-vol=",
+                    signedVol6, ", aabb-vol=", aabbVol, ", need-flip=true)");
+    }
 }
 
 INFENGINE_REGISTER_COMPONENT("MeshCollider", MeshCollider)
@@ -293,6 +348,15 @@ void *MeshCollider::CreateJoltShapeRaw() const
         CookMeshGeometry(vertices, indices);
         INFLOG_INFO("MeshCollider: mesh cooking — verts ", origVerts, "→", vertices.size(), ", tris ", origTris, "→",
                     indices.size() / 3);
+        // Ensure outward-facing winding for correct collision normals.
+        glm::vec3 meshScale(1.0f);
+        if (auto *go = GetGameObject()) {
+            if (auto *tf = go->GetTransform()) {
+                meshScale = tf->GetWorldScale();
+            }
+        }
+        EnsureOutwardWinding(vertices, indices, meshScale);
+
         if (indices.size() < 3) {
             shape = new JPH::BoxShape(JPH::Vec3(0.5f, 0.5f, 0.5f));
         } else {

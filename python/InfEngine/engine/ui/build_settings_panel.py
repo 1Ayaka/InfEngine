@@ -17,8 +17,15 @@ import json
 import threading
 from typing import Dict, List, Optional
 
+
+class _BuildCancelled(Exception):
+    """Raised when the user cancels the build."""
+    pass
+
 from InfEngine.debug import Debug
 from InfEngine.engine.project_context import get_project_root
+from InfEngine.engine.game_builder import _BuildCancelled as _GameBuilderCancelled
+from InfEngine.engine.nuitka_builder import _BuildCancelled as _NuitkaCancelled
 from InfEngine.engine.i18n import t
 from .theme import Theme, ImGuiCol, ImGuiStyleVar
 
@@ -83,11 +90,13 @@ class BuildSettingsPanel:
     def __init__(self):
         self._visible: bool = False
         self._first_open: bool = True
+        self._game_name: str = ""
         self._scenes: List[str] = []
         self._output_dir: str = ""
         self._display_mode_idx: int = 0  # 0=fullscreen, 1=windowed
         self._window_width: int = 1280
         self._window_height: int = 720
+        self._window_resizable: bool = True
         self._splash_items: List[Dict] = []
         self._load()
 
@@ -97,6 +106,7 @@ class BuildSettingsPanel:
         self._build_message: str = ""
         self._build_error: Optional[str] = None
         self._build_output_dir: Optional[str] = None
+        self._cancel_event: threading.Event = threading.Event()
 
     # ------------------------------------------------------------------
     # Public API
@@ -106,6 +116,7 @@ class BuildSettingsPanel:
         self._visible = True
         self._first_open = True
         self._load()
+        self._prune_missing_splash()
 
     def close(self):
         self._visible = False
@@ -123,6 +134,7 @@ class BuildSettingsPanel:
 
     def _load(self):
         data = load_build_settings()
+        self._game_name = data.get("game_name", "")
         self._scenes = list(data.get("scenes", []))
         self._output_dir = data.get("output_dir", "")
         mode_key = data.get("display_mode", "fullscreen_borderless")
@@ -132,15 +144,28 @@ class BuildSettingsPanel:
         )
         self._window_width = data.get("window_width", 1280)
         self._window_height = data.get("window_height", 720)
+        self._window_resizable = data.get("window_resizable", True)
         self._splash_items = list(data.get("splash_items", []))
+
+    def _prune_missing_splash(self):
+        """Remove splash items whose source files no longer exist."""
+        before = len(self._splash_items)
+        self._splash_items = [
+            it for it in self._splash_items
+            if os.path.isfile(it.get("path", ""))
+        ]
+        if len(self._splash_items) < before:
+            self._save()
 
     def _save(self):
         save_build_settings({
+            "game_name": self._game_name,
             "scenes": self._scenes,
             "output_dir": self._output_dir,
             "display_mode": _DISPLAY_MODE_KEYS[self._display_mode_idx],
             "window_width": self._window_width,
             "window_height": self._window_height,
+            "window_resizable": self._window_resizable,
             "splash_items": self._splash_items,
         })
 
@@ -172,15 +197,23 @@ class BuildSettingsPanel:
             return
 
         if visible:
+            if self._building:
+                ctx.begin_disabled(True)
             self._render_body(ctx)
+            if self._building:
+                ctx.end_disabled()
 
         ctx.end_window()
 
     # ------------------------------------------------------------------
 
     def _render_body(self, ctx):
+        ctx.dummy(0.0, 4.0)
         # Reserve ~80px at the bottom for build controls
         child_h = max(0, ctx.get_content_region_avail_height() - 80)
+        
+        ctx.push_style_color(ImGuiCol.ChildBg, 0.0, 0.0, 0.0, 0.0)
+        ctx.push_style_var_float(ImGuiStyleVar.ChildBorderSize, 0.0)
         if ctx.begin_child("##build_body", 0, child_h, False):
             self._render_output_section(ctx)
             ctx.separator()
@@ -190,6 +223,8 @@ class BuildSettingsPanel:
             ctx.separator()
             self._render_scene_section(ctx)
         ctx.end_child()
+        ctx.pop_style_var(1)
+        ctx.pop_style_color(1)
 
         ctx.separator()
         self._render_build_controls(ctx)
@@ -199,13 +234,28 @@ class BuildSettingsPanel:
     # ------------------------------------------------------------------
 
     def _render_output_section(self, ctx):
+        ctx.label(t("build.game_name"))
+        root = get_project_root()
+        placeholder = os.path.basename(root) if root else "MyGame"
+        ctx.set_next_item_width(400)
+        new_name = ctx.text_input("##game_name", self._game_name, 256)
+        if new_name != self._game_name:
+            self._game_name = new_name
+            self._save()
+        if not self._game_name:
+            ctx.same_line()
+            ctx.push_style_color(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+            ctx.label(t("build.game_name_hint").format(name=placeholder))
+            ctx.pop_style_color(1)
+
         ctx.label(t("build.output_directory"))
+        ctx.set_next_item_width(ctx.get_content_region_avail_width() - 84)
         new_val = ctx.text_input("##output_dir", self._output_dir, 512)
         if new_val != self._output_dir:
             self._output_dir = new_val
             self._save()
         ctx.same_line()
-        ctx.button(t("build.browse") + "##browse_out", self._browse_output_dir, width=70)
+        ctx.button(t("build.browse") + "##browse_out", self._browse_output_dir, width=80)
 
     def _browse_output_dir(self):
         def _do():
@@ -250,6 +300,11 @@ class BuildSettingsPanel:
                 self._window_height = max(240, min(4320, new_h))
                 self._save()
 
+            new_resizable = ctx.checkbox(t("build.window_resizable") + "##resizable", self._window_resizable)
+            if new_resizable != self._window_resizable:
+                self._window_resizable = new_resizable
+                self._save()
+
 
 
     # ------------------------------------------------------------------
@@ -264,48 +319,66 @@ class BuildSettingsPanel:
 
         for i, item in enumerate(self._splash_items):
             ctx.push_id(i + 10000)
+            ctx.push_style_var_vec2(ImGuiStyleVar.ItemSpacing, *Theme.BUILD_SETTINGS_ROW_SPC)
 
             fname = os.path.basename(item.get("path", "<none>"))
             item_type = item.get("type", "image")
             badge = "[IMG]" if item_type == "image" else "[VID]"
 
-            ctx.push_style_var_vec2(ImGuiStyleVar.ItemSpacing, *Theme.BUILD_SETTINGS_ROW_SPC)
+            # ── Row 1: name ──
+            ctx.label(f"  {i + 1}. {badge}  {fname}")
+            if ctx.is_item_hovered():
+                ctx.set_tooltip(item.get("path", ""))
 
-            # Row label
-            ctx.label(f"  {i}  {badge}  {fname}")
-
-            # Inline controls
+            # ── Row 2: numeric fields ──
             if item_type == "image":
-                # Duration
-                ctx.same_line(280)
-                new_dur = ctx.input_float(t("build.duration") + f"##dur{i}", item.get("duration", 3.0), 0.1, 1.0)
+                ctx.label(f"      {t('build.duration')} ({t('build.seconds_short')})")
+                ctx.same_line(0, 8)
+                ctx.set_next_item_width(120)
+                new_dur = ctx.input_float(f"##dur{i}", item.get("duration", 3.0), 0.1, 1.0)
                 if new_dur != item.get("duration", 3.0):
                     item["duration"] = max(0.1, new_dur)
                     self._save()
+                ctx.same_line(0, 24)
+            else:
+                ctx.label("      ")
+                ctx.same_line(0, 0)
 
-            # Fade in/out
-            ctx.same_line(420)
-            new_fi = ctx.input_float(t("build.fade_in") + f"##fi{i}", item.get("fade_in", 0.5), 0.1, 0.5)
+            ctx.label(f"{t('build.fade_in')} ({t('build.seconds_short')})")
+            ctx.same_line(0, 8)
+            ctx.set_next_item_width(120)
+            new_fi = ctx.input_float(f"##fi{i}", item.get("fade_in", 0.5), 0.1, 0.5)
             if new_fi != item.get("fade_in", 0.5):
                 item["fade_in"] = max(0.0, new_fi)
                 self._save()
 
-            ctx.same_line(490)
-            new_fo = ctx.input_float(t("build.fade_out") + f"##fo{i}", item.get("fade_out", 0.5), 0.1, 0.5)
+            ctx.same_line(0, 24)
+            ctx.label(f"{t('build.fade_out')} ({t('build.seconds_short')})")
+            ctx.same_line(0, 8)
+            ctx.set_next_item_width(120)
+            new_fo = ctx.input_float(f"##fo{i}", item.get("fade_out", 0.5), 0.1, 0.5)
             if new_fo != item.get("fade_out", 0.5):
                 item["fade_out"] = max(0.0, new_fo)
                 self._save()
 
-            # Up / Down / Remove buttons
-            ctx.same_line(560)
+            # ── Row 3: action buttons ──
+            ctx.label(" ")
+            
+            btn_w = 64
+            btn_spc = 4
+            num_btns = 1 + int(i > 0) + int(i < len(self._splash_items) - 1)
+            btn_area = num_btns * btn_w + (num_btns - 1) * btn_spc + 24
+            
+            ctx.same_line(max(ctx.get_window_width() - btn_area, 200))
+            
             if i > 0:
                 def _up(idx=i):
                     self._splash_items[idx - 1], self._splash_items[idx] = (
                         self._splash_items[idx], self._splash_items[idx - 1]
                     )
                     self._save()
-                ctx.button(f"Up##{i}", _up)
-                ctx.same_line()
+                ctx.button(t("build.move_up") + f"##sp_{i}", _up, width=btn_w)
+                ctx.same_line(0, btn_spc)
 
             if i < len(self._splash_items) - 1:
                 def _down(idx=i):
@@ -313,13 +386,15 @@ class BuildSettingsPanel:
                         self._splash_items[idx + 1], self._splash_items[idx]
                     )
                     self._save()
-                ctx.button(f"Dn##{i}", _down)
-                ctx.same_line()
+                ctx.button(t("build.move_down") + f"##sp_{i}", _down, width=btn_w)
+                ctx.same_line(0, btn_spc)
 
             def _rm(idx=i):
                 nonlocal remove_idx
                 remove_idx = idx
-            ctx.button(f"X##{i}", _rm)
+            ctx.button(t("build.remove") + f"##sp_{i}", _rm, width=btn_w)
+
+            ctx.separator()
 
             ctx.pop_style_var(1)
             ctx.pop_id()
@@ -390,7 +465,10 @@ class BuildSettingsPanel:
             rel = os.path.relpath(scene_path, root)
 
             ctx.push_style_var_vec2(ImGuiStyleVar.ItemSpacing, *Theme.BUILD_SETTINGS_ROW_SPC)
-            ctx.selectable(f"  {i}    {name}    ({rel})##row", False, 16, 0, 0)
+            
+            # Use a fixed row height so selectable and buttons align
+            row_h = 24
+            ctx.selectable(f"  {i}    {name}    ({rel})##row", False, 16, 0, row_h)
 
             # Drag source — reorder
             if ctx.begin_drag_drop_source(0):
@@ -408,26 +486,30 @@ class BuildSettingsPanel:
                     self._add_scene(str(payload))
             IGUI.multi_drop_target(ctx, (DRAG_DROP_REORDER, DRAG_DROP_SCENE), _on_drop)
 
-            btn_area = 160 if i > 0 and i < len(self._scenes) - 1 else 110
+            btn_w = 64
+            btn_spc = 4
+            num_btns = 1 + int(i > 0) + int(i < len(self._scenes) - 1)
+            btn_area = num_btns * btn_w + (num_btns - 1) * btn_spc + 24
+            
             ctx.same_line(max(ctx.get_window_width() - btn_area, 200))
             if i > 0:
                 def _up(idx=i):
                     self._scenes[idx - 1], self._scenes[idx] = self._scenes[idx], self._scenes[idx - 1]
                     self._save()
-                ctx.button(f"Up##{i}", _up)
-                ctx.same_line()
+                ctx.button(t("build.move_up") + f"##{i}", _up, width=btn_w, height=row_h)
+                ctx.same_line(0, btn_spc)
 
             if i < len(self._scenes) - 1:
                 def _down(idx=i):
                     self._scenes[idx], self._scenes[idx + 1] = self._scenes[idx + 1], self._scenes[idx]
                     self._save()
-                ctx.button(f"Down##{i}", _down)
-                ctx.same_line()
+                ctx.button(t("build.move_down") + f"##{i}", _down, width=btn_w, height=row_h)
+                ctx.same_line(0, btn_spc)
 
             def _rm(idx=i):
                 nonlocal remove_idx
                 remove_idx = idx
-            ctx.button(f"Remove##{i}", _rm)
+            ctx.button(t("build.remove") + f"##{i}", _rm, width=btn_w, height=row_h)
 
             ctx.pop_style_var(1)
             ctx.pop_id()
@@ -456,17 +538,23 @@ class BuildSettingsPanel:
     # ------------------------------------------------------------------
 
     def _render_build_controls(self, ctx):
+        # Build controls zone is always interactive (not affected by
+        # the disabled wrapper around the settings body).
         if self._building:
+            ctx.end_disabled()
             ctx.label(self._build_message or t("build.building"))
             ctx.progress_bar(self._build_progress, -1.0, 20.0, "")
+            ctx.button("  " + t("build.cancel") + "  ##cancel_build",
+                       self._cancel_build, width=120, height=30)
+            ctx.begin_disabled(True)
         elif self._build_error:
-            ctx.push_style_color(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+            ctx.push_style_color(ImGuiCol.Text, *Theme.ERROR_TEXT)
             ctx.label(t("build.failed").format(err=self._build_error))
             ctx.pop_style_color(1)
             ctx.same_line()
             ctx.button("OK##dismiss_err", self._dismiss_build_error)
         elif self._build_output_dir:
-            ctx.push_style_color(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0)
+            ctx.push_style_color(ImGuiCol.Text, *Theme.SUCCESS_TEXT)
             ctx.label(t("build.succeeded").format(path=os.path.basename(self._build_output_dir) + "/"))
             ctx.pop_style_color(1)
             ctx.same_line()
@@ -488,17 +576,20 @@ class BuildSettingsPanel:
             can_build = len(self._scenes) > 0 and bool(self._output_dir)
 
             if not can_build:
-                ctx.push_style_color(ImGuiCol.Button, 0.3, 0.3, 0.3, 1.0)
-                ctx.push_style_color(ImGuiCol.ButtonHovered, 0.3, 0.3, 0.3, 1.0)
-                ctx.push_style_color(ImGuiCol.ButtonActive, 0.3, 0.3, 0.3, 1.0)
+                ctx.push_style_color(ImGuiCol.Button, *Theme.BTN_DISABLED)
+                ctx.push_style_color(ImGuiCol.ButtonHovered, *Theme.BTN_DISABLED)
+                ctx.push_style_color(ImGuiCol.ButtonActive, *Theme.BTN_DISABLED)
+
+            # Align build buttons to the right
+            ctx.same_line(max(ctx.get_window_width() - 360, 200))
 
             ctx.button("  " + t("build.build") + "  ",
                         self._start_build if can_build else lambda: None,
-                        width=120, height=30)
-            ctx.same_line(0, 12)
+                        width=140, height=36)
+            ctx.same_line(0, 16)
             ctx.button("  " + t("build.build_and_run") + "  ",
                         self._start_build_and_run if can_build else lambda: None,
-                        width=200, height=30)
+                        width=160, height=36)
 
             if not can_build:
                 ctx.pop_style_color(3)
@@ -516,75 +607,71 @@ class BuildSettingsPanel:
     def _make_builder(self):
         from InfEngine.engine.game_builder import GameBuilder
         project_root = get_project_root()
+        game_name = self._game_name.strip() or os.path.basename(project_root)
         return GameBuilder(
             project_root,
             self._output_dir,
+            game_name=game_name,
             display_mode=_DISPLAY_MODE_KEYS[self._display_mode_idx],
             window_width=self._window_width,
             window_height=self._window_height,
+            window_resizable=self._window_resizable,
             splash_items=self._splash_items,
         )
 
-    def _start_build(self):
-        if self._building:
-            return
-        self._building = True
-        self._build_progress = 0.0
-        self._build_message = "Starting build..."
-        self._build_error = None
-        self._build_output_dir = None
-
-        if not get_project_root():
-            self._building = False
-            self._build_error = "No project root found"
-            return
-
-        def _run():
-            try:
-                builder = self._make_builder()
-                result = builder.build(on_progress=self._on_build_progress)
-                self._build_output_dir = result
-            except Exception as exc:
-                self._build_error = str(exc)
-            finally:
-                self._building = False
-
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _start_build_and_run(self):
-        if self._building:
-            return
-        self._building = True
-        self._build_progress = 0.0
-        self._build_message = "Starting build..."
-        self._build_error = None
-        self._build_output_dir = None
-
-        if not get_project_root():
-            self._building = False
-            self._build_error = "No project root found"
-            return
-
-        def _run():
-            try:
-                import subprocess
-                builder = self._make_builder()
-                result = builder.build(on_progress=self._on_build_progress)
-                self._build_output_dir = result
-
-                launcher = os.path.join(result, f"{builder.project_name}.exe")
-                if os.path.isfile(launcher):
-                    subprocess.Popen([launcher], cwd=result)
-            except Exception as exc:
-                self._build_error = str(exc)
-            finally:
-                self._building = False
-
-        threading.Thread(target=_run, daemon=True).start()
+    def _cancel_build(self):
+        self._cancel_event.set()
 
     def _on_build_progress(self, message: str, fraction: float):
         self._build_message = message
         self._build_progress = fraction
+        if self._cancel_event.is_set():
+            raise _BuildCancelled()
+
+    def _start_build(self):
+        self._do_build(run_after=False)
+
+    def _start_build_and_run(self):
+        self._do_build(run_after=True)
+
+    def _do_build(self, *, run_after: bool):
+        if self._building:
+            return
+        self._building = True
+        self._build_progress = 0.0
+        self._build_message = "Starting build..."
+        self._build_error = None
+        self._build_output_dir = None
+        self._cancel_event.clear()
+
+        if not get_project_root():
+            self._building = False
+            self._build_error = "No project root found"
+            return
+
+        def _run():
+            try:
+                builder = self._make_builder()
+                result = builder.build(
+                    on_progress=self._on_build_progress,
+                    cancel_event=self._cancel_event,
+                )
+                self._build_output_dir = result
+
+                if run_after:
+                    import subprocess
+                    exe_name = f"{builder.project_name}.exe"
+                    launcher = os.path.join(result, exe_name)
+                    if os.path.isfile(launcher):
+                        subprocess.Popen([launcher], cwd=result)
+            except (_BuildCancelled, _GameBuilderCancelled, _NuitkaCancelled):
+                self._build_error = t("build.cancelled")
+            except Exception as exc:
+                self._build_error = str(exc)
+            finally:
+                self._building = False
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Internal

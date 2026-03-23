@@ -3,7 +3,7 @@
 Any part of the engine can call::
 
     EngineStatus.set("保存场景...", 0.5)              # persistent until cleared
-    EngineStatus.flash("保存完成 ✓", 1.0, 1.5)        # auto-clear after 1.5s
+    EngineStatus.flash("保存完成", 1.0, 1.5)        # auto-clear after 1.5s
     EngineStatus.clear()                              # immediate clear
 
 The StatusBarPanel reads these values every frame to render a progress bar

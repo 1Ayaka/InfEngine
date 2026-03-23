@@ -21,7 +21,7 @@ from InfEngine.components.serialized_field import FieldType
 from .enums import TextAlignH, TextAlignV
 from .ui_selectable import UISelectable
 from .ui_event import UIEvent
-from .ui_event_entry import UIEventEntry, materialize_event_arguments
+from .ui_event_entry import UIEventEntry, materialize_event_arguments, _get_serializable_raw_field
 
 
 @add_component_menu("UI/Button")
@@ -123,10 +123,10 @@ class UIButton(UISelectable):
         if not entries:
             return
         for entry in entries:
-            target_ref = getattr(entry, "target", None)
+            target_ref = _get_serializable_raw_field(entry, "target")
             if target_ref is None:
                 continue
-            go = target_ref.resolve() if hasattr(target_ref, "resolve") else None
+            go = target_ref.resolve() if hasattr(target_ref, "resolve") else target_ref
             if go is None:
                 continue
             comp_name = getattr(entry, "component_name", "") or ""

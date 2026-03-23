@@ -1,10 +1,12 @@
 #pragma once
 
 #include <atomic>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <sstream>
+#include <string>
 
 namespace infengine
 {
@@ -20,6 +22,12 @@ enum LogLevel
 class InfLog
 {
   public:
+    enum class FileLogMode
+    {
+        ImmediateFlush,
+        DeferredTail,
+    };
+
     static InfLog &GetInstance()
     {
         static InfLog instance;
@@ -30,10 +38,30 @@ class InfLog
     /// output goes to the file instead of the console.
     void SetLogFile(const std::string &path)
     {
+        ConfigureLogFile(path, FileLogMode::ImmediateFlush, 0);
+    }
+
+    void SetDeferredLogFile(const std::string &path, size_t retainedEntries = 100)
+    {
+        ConfigureLogFile(path, FileLogMode::DeferredTail, retainedEntries);
+    }
+
+    void FlushLogFile()
+    {
         std::lock_guard<std::mutex> lock(mutex_);
+        FlushLogFileLocked();
+    }
+
+    void Shutdown()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        FlushLogFileLocked();
         if (logFile_.is_open())
             logFile_.close();
-        logFile_.open(path, std::ios::out | std::ios::trunc);
+        logFilePath_.clear();
+        deferredEntries_.clear();
+        deferredFileLogging_ = false;
+        deferredRetention_ = 0;
     }
 
     template <typename... Args> void Log(LogLevel level, const char *file, int line, Args &&...args)
@@ -55,6 +83,12 @@ class InfLog
         plain << '\n';
 
         std::lock_guard<std::mutex> lock(mutex_);
+        if (deferredFileLogging_) {
+            deferredEntries_.push_back(plain.str());
+            while (deferredEntries_.size() > deferredRetention_)
+                deferredEntries_.pop_front();
+        }
+
         if (logFile_.is_open()) {
             std::string msg = plain.str();
             logFile_.write(msg.data(), static_cast<std::streamsize>(msg.size()));
@@ -82,11 +116,59 @@ class InfLog
     InfLog() : logLevel(LOG_INFO)
     {
     }
+    ~InfLog()
+    {
+        Shutdown();
+    }
     InfLog(const InfLog &) = delete;
     InfLog &operator=(const InfLog &) = delete;
 
+    void ConfigureLogFile(const std::string &path, FileLogMode mode, size_t retainedEntries)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (logFile_.is_open())
+            logFile_.close();
+
+        logFilePath_ = path;
+        deferredEntries_.clear();
+        deferredFileLogging_ = (mode == FileLogMode::DeferredTail);
+        deferredRetention_ = deferredFileLogging_ ? (retainedEntries > 0 ? retainedEntries : 100) : 0;
+
+        if (deferredFileLogging_) {
+            std::ofstream truncateFile(path, std::ios::out | std::ios::trunc);
+            return;
+        }
+
+        logFile_.open(path, std::ios::out | std::ios::trunc);
+    }
+
+    void FlushLogFileLocked()
+    {
+        if (deferredFileLogging_) {
+            if (logFilePath_.empty())
+                return;
+
+            std::ofstream out(logFilePath_, std::ios::out | std::ios::trunc);
+            if (!out.is_open())
+                return;
+
+            for (const auto &entry : deferredEntries_)
+                out.write(entry.data(), static_cast<std::streamsize>(entry.size()));
+            out.flush();
+            return;
+        }
+
+        if (logFile_.is_open())
+            logFile_.flush();
+    }
+
     std::mutex mutex_;
     std::ofstream logFile_;
+    std::string logFilePath_;
+    std::deque<std::string> deferredEntries_;
+    bool deferredFileLogging_ = false;
+    size_t deferredRetention_ = 0;
 
     std::atomic<int> logLevel;
 
@@ -149,3 +231,9 @@ class InfLog
 #define INFLOG_GET_LEVEL() InfLog::GetInstance().GetLogLevel()
 
 #define INFLOG_SET_FILE(path) InfLog::GetInstance().SetLogFile(path)
+
+#define INFLOG_SET_DEFERRED_FILE(path, retained) InfLog::GetInstance().SetDeferredLogFile(path, retained)
+
+#define INFLOG_FLUSH_FILE() InfLog::GetInstance().FlushLogFile()
+
+#define INFLOG_SHUTDOWN() InfLog::GetInstance().Shutdown()

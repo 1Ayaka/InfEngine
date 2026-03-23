@@ -1117,7 +1117,7 @@ class SceneFileManager:
         from InfEngine.engine.ui.engine_status import EngineStatus
         ok = self._do_save_inner(path)
         if ok:
-            EngineStatus.flash("保存完成 Saved ✓", 1.0, duration=1.5)
+            EngineStatus.flash("保存完成 Saved", 1.0, duration=1.5)
         else:
             EngineStatus.flash("保存失败 Save Failed", 0.0, duration=2.0)
         return ok

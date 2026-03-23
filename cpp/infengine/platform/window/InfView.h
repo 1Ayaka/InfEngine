@@ -34,6 +34,8 @@ class InfView
     void SetWindowIcon(const std::string &iconPath);
     void SetWindowFullscreen(bool fullscreen);
     void SetWindowTitle(const std::string &title);
+    void SetWindowMaximized(bool maximized);
+    void SetWindowResizable(bool resizable);
 
     /// Close-request interception: SDL_EVENT_QUIT sets this flag instead of
     /// immediately terminating.  Python checks the flag each frame and may
