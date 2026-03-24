@@ -785,18 +785,52 @@ class InfVkCoreModular
     // Per-Object GPU Buffers (Phase 2.3.4)
     // ========================================================================
 
-    /// @brief Per-object vertex/index buffer pair with size tracking
-    struct PerObjectBuffers
+    struct SharedMeshKey
     {
-        std::unique_ptr<vk::VkBufferHandle> vertexBuffer;
-        std::unique_ptr<vk::VkBufferHandle> indexBuffer;
+        const void *verticesPtr = nullptr;
+        const void *indicesPtr = nullptr;
+
+        bool operator==(const SharedMeshKey &other) const noexcept
+        {
+            return verticesPtr == other.verticesPtr && indicesPtr == other.indicesPtr;
+        }
+    };
+
+    struct SharedMeshKeyHash
+    {
+        size_t operator()(const SharedMeshKey &key) const noexcept
+        {
+            const size_t h1 = std::hash<const void *>{}(key.verticesPtr);
+            const size_t h2 = std::hash<const void *>{}(key.indicesPtr);
+            return h1 ^ (h2 << 1);
+        }
+    };
+
+    /// @brief Shared vertex/index buffer pair keyed by mesh storage identity.
+    struct SharedMeshBuffers
+    {
+        std::shared_ptr<vk::VkBufferHandle> vertexBuffer;
+        std::shared_ptr<vk::VkBufferHandle> indexBuffer;
         size_t vertexCount = 0;
         size_t indexCount = 0;
     };
 
+    /// @brief Per-object reference into the shared mesh-buffer cache.
+    struct PerObjectBuffers
+    {
+        std::shared_ptr<vk::VkBufferHandle> vertexBuffer;
+        std::shared_ptr<vk::VkBufferHandle> indexBuffer;
+        size_t vertexCount = 0;
+        size_t indexCount = 0;
+        SharedMeshKey sharedKey;
+    };
+
     /// @brief Map from objectId → persistent GPU buffers.
-    /// Buffers are only recreated when vertex/index count changes.
+    /// Objects with identical mesh storage share the same GPU buffers.
     std::unordered_map<uint64_t, PerObjectBuffers> m_perObjectBuffers;
+
+    /// @brief Shared mesh GPU buffer cache keyed by vertex/index storage pointers.
+    std::unordered_map<SharedMeshKey, SharedMeshBuffers, SharedMeshKeyHash> m_sharedMeshBuffers;
 
     // Render callbacks (RenderGraph-based)
     std::function<void(VkCommandBuffer cmdBuf)> m_renderGraphExecutor;

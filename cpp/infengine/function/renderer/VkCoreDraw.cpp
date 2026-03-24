@@ -1015,30 +1015,53 @@ void InfVkCoreModular::EnsureObjectBuffers(uint64_t objectId, const std::vector<
     if (vertices.empty() || indices.empty())
         return;
 
-    auto it = m_perObjectBuffers.find(objectId);
-    if (it != m_perObjectBuffers.end() && !forceUpdate) {
-        // Buffer already exists — only recreate if size changed
-        if (it->second.vertexCount == vertices.size() && it->second.indexCount == indices.size()) {
-            return; // Same size and version, no update needed (static mesh)
+    const SharedMeshKey sharedKey{vertices.data(), indices.data()};
+
+    auto objectIt = m_perObjectBuffers.find(objectId);
+    if (objectIt != m_perObjectBuffers.end() && !forceUpdate) {
+        if (objectIt->second.sharedKey == sharedKey && objectIt->second.vertexCount == vertices.size() &&
+            objectIt->second.indexCount == indices.size()) {
+            return;
         }
     }
 
-    // Create or recreate buffers
-    PerObjectBuffers buffers;
-    buffers.vertexBuffer = m_resourceManager.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(Vertex));
-    buffers.indexBuffer = m_resourceManager.CreateIndexBuffer(indices.data(), indices.size() * sizeof(uint32_t));
-    buffers.vertexCount = vertices.size();
-    buffers.indexCount = indices.size();
+    auto sharedIt = m_sharedMeshBuffers.find(sharedKey);
+    const bool needsCreate = (sharedIt == m_sharedMeshBuffers.end() || forceUpdate ||
+                              sharedIt->second.vertexCount != vertices.size() ||
+                              sharedIt->second.indexCount != indices.size() || !sharedIt->second.vertexBuffer ||
+                              !sharedIt->second.indexBuffer);
 
-    m_perObjectBuffers[objectId] = std::move(buffers);
+    if (needsCreate) {
+        SharedMeshBuffers sharedBuffers;
+        sharedBuffers.vertexBuffer = std::shared_ptr<vk::VkBufferHandle>(
+            m_resourceManager.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(Vertex)).release());
+        sharedBuffers.indexBuffer = std::shared_ptr<vk::VkBufferHandle>(
+            m_resourceManager.CreateIndexBuffer(indices.data(), indices.size() * sizeof(uint32_t)).release());
+        sharedBuffers.vertexCount = vertices.size();
+        sharedBuffers.indexCount = indices.size();
+        sharedIt = m_sharedMeshBuffers.insert_or_assign(sharedKey, std::move(sharedBuffers)).first;
+    }
+
+    PerObjectBuffers objectBuffers;
+    objectBuffers.vertexBuffer = sharedIt->second.vertexBuffer;
+    objectBuffers.indexBuffer = sharedIt->second.indexBuffer;
+    objectBuffers.vertexCount = sharedIt->second.vertexCount;
+    objectBuffers.indexCount = sharedIt->second.indexCount;
+    objectBuffers.sharedKey = sharedKey;
+
+    m_perObjectBuffers[objectId] = std::move(objectBuffers);
 }
 
 void InfVkCoreModular::CleanupUnusedBuffers(const std::vector<DrawCall> &activeDrawCalls)
 {
     // Build set of active objectIds
     std::unordered_set<uint64_t> activeIds;
+    std::unordered_set<SharedMeshKey, SharedMeshKeyHash> activeSharedKeys;
     for (const auto &dc : activeDrawCalls) {
         activeIds.insert(dc.objectId);
+        if (dc.meshVertices && dc.meshIndices && !dc.meshVertices->empty() && !dc.meshIndices->empty()) {
+            activeSharedKeys.insert({dc.meshVertices->data(), dc.meshIndices->data()});
+        }
     }
 
     // Remove buffers for objects no longer in the scene.
@@ -1046,13 +1069,20 @@ void InfVkCoreModular::CleanupUnusedBuffers(const std::vector<DrawCall> &activeD
     // so that in-flight command buffers are never invalidated.
     for (auto it = m_perObjectBuffers.begin(); it != m_perObjectBuffers.end();) {
         if (activeIds.find(it->first) == activeIds.end()) {
-            // Move the buffer ownership into the deletion queue
-            auto buffers = std::make_shared<PerObjectBuffers>(std::move(it->second));
+            it = m_perObjectBuffers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto it = m_sharedMeshBuffers.begin(); it != m_sharedMeshBuffers.end();) {
+        if (activeSharedKeys.find(it->first) == activeSharedKeys.end()) {
+            auto buffers = std::make_shared<SharedMeshBuffers>(std::move(it->second));
             m_deletionQueue.Push([buffers]() mutable {
                 buffers->vertexBuffer.reset();
                 buffers->indexBuffer.reset();
             });
-            it = m_perObjectBuffers.erase(it);
+            it = m_sharedMeshBuffers.erase(it);
         } else {
             ++it;
         }

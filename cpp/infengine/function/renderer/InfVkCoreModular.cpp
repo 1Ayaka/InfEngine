@@ -74,6 +74,7 @@ InfVkCoreModular::~InfVkCoreModular()
     // Explicit destruction in controlled order (avoids double-free from
     // RAII reverse-declaration order when handles are shared across systems).
     m_perObjectBuffers.clear();
+    m_sharedMeshBuffers.clear();
     m_textureCache.Clear();
     m_shaderCache.Clear();
 
