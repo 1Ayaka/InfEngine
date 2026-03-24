@@ -9,11 +9,31 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-import zipfile
+
+
+def _first_existing_path(paths: list[str]) -> str | None:
+    for path in paths:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def _existing_dirs(paths: list[str]) -> list[str]:
+    return [path for path in paths if path and os.path.isdir(path)]
+
+
+def _is_embeddable_python_root(python_root: str) -> bool:
+    try:
+        return any(name.lower().endswith("._pth") for name in os.listdir(python_root))
+    except OSError:
+        return False
 
 
 def _is_python312(python_exe: str) -> bool:
     if not os.path.isfile(python_exe):
+        return False
+
+    if _is_embeddable_python_root(os.path.dirname(python_exe)):
         return False
 
     kwargs = {
@@ -59,26 +79,23 @@ def _find_installed_python(python_root: str) -> str | None:
     return None
 
 
-_GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
-
-
-def _runtime_zip_info_for_machine() -> tuple[str, str]:
-    """Return (filename, url) for the Python 3.12 embeddable zip package."""
+def _runtime_installer_info_for_machine() -> tuple[str, str]:
+    """Return (filename, url) for the official Python 3.12 Windows installer."""
     machine = (platform.machine() or "").lower()
     if machine in {"amd64", "x86_64"}:
         return (
-            "python-3.12.8-embed-amd64.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
+            "python-3.12.8-amd64.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
         )
     if machine in {"arm64", "aarch64"}:
         return (
-            "python-3.12.8-embed-arm64.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-arm64.zip",
+            "python-3.12.8-arm64.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-arm64.exe",
         )
     if machine in {"x86", "i386", "i686"}:
         return (
-            "python-3.12.8-embed-win32.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-win32.zip",
+            "python-3.12.8.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8.exe",
         )
     raise RuntimeError(f"Unsupported Windows architecture: {machine}")
 
@@ -97,19 +114,6 @@ def _download_file(url: str, dest: str) -> None:
                 "The SSL runtime was not initialized correctly."
             ) from exc
         raise
-
-
-def _enable_site_packages(python_root: str) -> None:
-    """Uncomment 'import site' in the ._pth file to enable site-packages."""
-    for name in os.listdir(python_root):
-        if name.endswith("._pth"):
-            pth_path = os.path.join(python_root, name)
-            with open(pth_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            content = content.replace("#import site", "import site")
-            with open(pth_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            break
 
 
 def _run_hidden(args: list[str], *, timeout: int) -> None:
@@ -145,61 +149,60 @@ def _emit(progress_callback, message: str) -> None:
 
 
 def install_runtime_for_app(app_dir: str, progress_callback=None) -> None:
-    zip_name, zip_url = _runtime_zip_info_for_machine()
+    installer_name, installer_url = _runtime_installer_info_for_machine()
     hub_data_dir = os.path.join(app_dir, "InfEngineHubData")
     runtime_dir = os.path.join(hub_data_dir, "runtime")
     python_root = os.path.join(hub_data_dir, "python312")
     template_dir = os.path.join(runtime_dir, "venv_template")
-    zip_path = os.path.join(runtime_dir, zip_name)
+    installer_path = os.path.join(runtime_dir, installer_name)
     python_exe = os.path.join(python_root, "python.exe")
-    get_pip_path = os.path.join(runtime_dir, "get-pip.py")
 
     os.makedirs(runtime_dir, exist_ok=True)
 
-    # 1. Download the embeddable zip (skipped if already cached).
-    if not os.path.isfile(zip_path):
+    # 1. Download the full Python installer (skipped if already cached).
+    if not os.path.isfile(installer_path):
         _emit(progress_callback, f"Downloading Python 3.12 for {platform.machine()}...")
-        _download_file(zip_url, zip_path)
+        _download_file(installer_url, installer_path)
 
-    # 2. Extract into python312/.
-    if not os.path.isfile(python_exe):
-        _emit(progress_callback, "Extracting Python 3.12...")
+    # 2. Install into the app-private python312/ directory.
+    if not _is_python312(python_exe):
+        _emit(progress_callback, "Installing Python 3.12...")
         shutil.rmtree(python_root, ignore_errors=True)
         os.makedirs(python_root, exist_ok=True)
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(python_root)
+        _run_hidden(
+            [
+                installer_path,
+                "/quiet",
+                "InstallAllUsers=0",
+                f'TargetDir={python_root}',
+                "AssociateFiles=0",
+                "CompileAll=0",
+                "Include_debug=0",
+                "Include_dev=0",
+                "Include_doc=0",
+                "Include_launcher=0",
+                "Include_pip=1",
+                "Include_symbols=0",
+                "Include_tcltk=1",
+                "Include_test=0",
+                "LauncherOnly=0",
+                "PrependPath=0",
+                "Shortcuts=0",
+                "SimpleInstall=1",
+            ],
+            timeout=1800,
+        )
 
     if not os.path.isfile(python_exe):
         raise RuntimeError(
-            "Python 3.12 executable was not found after extraction:\n"
+            "Python 3.12 executable was not found after installation:\n"
             f"{python_exe}"
         )
 
-    # 3. Enable site-packages in the ._pth file.
-    _emit(progress_callback, "Configuring Python runtime...")
-    _enable_site_packages(python_root)
-
-    # 4. Bootstrap pip via get-pip.py.
-    pip_exe = os.path.join(python_root, "Scripts", "pip.exe")
-    if not os.path.isfile(pip_exe):
-        if not os.path.isfile(get_pip_path):
-            _emit(progress_callback, "Downloading pip bootstrap...")
-            _download_file(_GET_PIP_URL, get_pip_path)
-        _emit(progress_callback, "Installing pip...")
-        _run_hidden([python_exe, get_pip_path, "--no-warn-script-location"], timeout=600)
-
-    # 5. Install virtualenv (used in place of stdlib venv which the embeddable
-    #    distribution does not include).
-    _emit(progress_callback, "Installing virtualenv...")
-    _run_hidden(
-        [python_exe, "-m", "pip", "install", "virtualenv", "-q", "--no-warn-script-location"],
-        timeout=600,
-    )
-
-    # 6. Create the reusable venv template.
+    # 3. Create the reusable venv template.
     _emit(progress_callback, "Preparing reusable venv template...")
     shutil.rmtree(template_dir, ignore_errors=True)
-    _run_hidden([python_exe, "-m", "virtualenv", "--copies", template_dir], timeout=600)
+    _run_hidden([python_exe, "-m", "venv", "--copies", template_dir], timeout=600)
     _emit(progress_callback, "Private runtime is ready.")
 
 

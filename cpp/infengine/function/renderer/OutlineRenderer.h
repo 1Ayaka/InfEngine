@@ -126,11 +126,10 @@ class OutlineRenderer
     /// @return true if commands were actually recorded, false if skipped (resources not ready)
     bool RecordCommands(VkCommandBuffer cmdBuf, const std::vector<DrawCall> &drawCalls);
 
-    /// @brief Record the scene-color → SHADER_READ_ONLY transition barrier.
+    /// @brief Finalize scene-color state when outline is inactive.
     ///
-    /// When no outline is active, the scene color image still needs to be
-    /// transitioned to SHADER_READ_ONLY_OPTIMAL for ImGui sampling.
-    /// Call this from the post-scene-render callback when HasActiveOutline() is false.
+    /// The scene render graph already leaves the sampled scene color in
+    /// SHADER_READ_ONLY_OPTIMAL, so this is intentionally a no-op.
     void RecordNoOutlineBarrier(VkCommandBuffer cmdBuf);
 
   private:

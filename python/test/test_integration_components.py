@@ -47,6 +47,17 @@ class TestComponentLifecycle:
         go.remove_component(rb)
         assert go.get_component("Rigidbody") is None
 
+    def test_remove_box_collider_with_mesh_collider_and_rigidbody(self, scene):
+        go = scene.create_primitive(PrimitiveType.Cube, "ColliderHost")
+        mesh = go.add_component("MeshCollider")
+        box = go.add_component("BoxCollider")
+        go.add_component("Rigidbody")
+
+        assert go.remove_component(box) is True
+        assert go.get_component("BoxCollider") is None
+        assert go.get_component("MeshCollider") is mesh
+        assert go.get_component("Rigidbody") is not None
+
     def test_cannot_remove_transform(self, scene):
         go = scene.create_game_object("GO")
         t = go.get_component("Transform")

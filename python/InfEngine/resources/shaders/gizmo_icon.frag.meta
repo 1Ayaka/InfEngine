@@ -1,0 +1,93 @@
+{
+    "meta_version": 2,
+    "metadata": {
+        "content_hash": {
+            "type": "string",
+            "value": "a8cb9db2c8b6db57"
+        },
+        "file_path": {
+            "type": "string",
+            "value": "E:/project/InfEngine/python/InfEngine/resources/shaders/gizmo_icon.frag"
+        },
+        "guid": {
+            "type": "string",
+            "value": "a6b00c44d5b145f183bdbdd85cb09765"
+        },
+        "importer_version": {
+            "type": "int",
+            "value": 1
+        },
+        "last_modified": {
+            "type": "string",
+            "value": "1774233600"
+        },
+        "properties": {
+            "type": "string",
+            "value": "[{\"name\":\"baseColor\",\"type\":\"Color\",\"default\":[1.0,1.0,1.0,1.0]},{\"name\":\"texSampler\",\"type\":\"Texture2D\",\"default\":\"white\"}]"
+        },
+        "resource_type": {
+            "type": "enum infengine::ResourceType",
+            "value": "Shader"
+        },
+        "shader_alpha_test": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_blend": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_cast_shadows": {
+            "type": "bool",
+            "value": true
+        },
+        "shader_cull_mode": {
+            "type": "string",
+            "value": "back"
+        },
+        "shader_depth_test": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_depth_write": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_hidden": {
+            "type": "bool",
+            "value": true
+        },
+        "shader_id": {
+            "type": "string",
+            "value": "gizmo_icon"
+        },
+        "shader_lighting_type": {
+            "type": "string",
+            "value": "unlit"
+        },
+        "shader_pass_tag": {
+            "type": "string",
+            "value": "opaque"
+        },
+        "shader_queue": {
+            "type": "int",
+            "value": 2000
+        },
+        "shader_receive_shadows": {
+            "type": "bool",
+            "value": true
+        },
+        "shader_stencil": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_surface_type": {
+            "type": "string",
+            "value": "opaque"
+        },
+        "type": {
+            "type": "string",
+            "value": "fragment"
+        }
+    }
+}

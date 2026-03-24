@@ -1,3 +1,4 @@
+import os
 import sys
 sys.dont_write_bytecode = True
 
@@ -131,7 +132,7 @@ class GameEngineLauncher(QMainWindow):
             self,
             "Python 3.12 Setup",
             "InfEngine Hub needs Python 3.12 to create and launch projects.\n\n"
-            "The recommended path is to install InfEngine Hub through the installer, which prepares Python 3.12 during setup.\n"
+            "The recommended path is to install InfEngine Hub through the installer, which prepares a full Python 3.12 runtime during setup.\n"
             "This standalone build will now download the matching Python 3.12 installer for this machine\n"
             "and prepare Python 3.12 plus a reusable venv template in InfEngineHubData.",
         )

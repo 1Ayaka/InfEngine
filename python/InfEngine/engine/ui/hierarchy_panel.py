@@ -2,6 +2,7 @@
 Unity-style Hierarchy panel showing scene objects tree.
 """
 
+import json
 import os
 
 from InfEngine.lib import InfGUIContext
@@ -12,7 +13,7 @@ from .selection_manager import SelectionManager
 from .theme import Theme, ImGuiCol, ImGuiStyleVar, ImGuiTreeNodeFlags
 from .imgui_keys import (KEY_LEFT_CTRL, KEY_RIGHT_CTRL, KEY_LEFT_SHIFT,
                          KEY_RIGHT_SHIFT, KEY_F2, KEY_DELETE, KEY_ENTER,
-                         KEY_ESCAPE)
+                         KEY_ESCAPE, KEY_C, KEY_V, KEY_X)
 
 
 @editor_panel("Hierarchy", type_id="hierarchy", title_key="panel.hierarchy")
@@ -62,6 +63,8 @@ class HierarchyPanel(EditorPanel):
         self._on_selection_changed_ui_editor = None  # Extra callback for UI editor sync
         self._cached_ordered_ids = None
         self._cached_canvas_roots = None
+        self._clipboard_entries: list[dict] = []
+        self._clipboard_cut: bool = False
     
     def set_on_selection_changed(self, callback):
         """Set callback to be called when selection changes. Callback receives the selected GameObject or None."""
@@ -310,6 +313,13 @@ class HierarchyPanel(EditorPanel):
                     self._create_empty_object(parent_id=obj_id)
                 ctx.end_menu()
             ctx.separator()
+            if ctx.selectable(t("project.copy"), False, 0, 0, 0):
+                self._copy_selected_objects(cut=False)
+            if ctx.selectable(t("project.cut"), False, 0, 0, 0):
+                self._copy_selected_objects(cut=True)
+            if ctx.selectable(t("project.paste"), False, 0, 0, 0):
+                self._paste_clipboard_objects()
+            ctx.separator()
             if ctx.selectable(t("hierarchy.rename"), False, 0, 0, 0):
                 self._begin_rename(obj_id)
             ctx.separator()
@@ -492,6 +502,199 @@ class HierarchyPanel(EditorPanel):
         self._sel.clear()
         self._notify_selection_changed()
 
+    def _get_scene_clipboard_signature(self, scene) -> str:
+        """Return a stable identifier for the current scene for clipboard routing."""
+        from InfEngine.engine.scene_manager import SceneFileManager
+
+        sfm = SceneFileManager.instance()
+        scene_path = getattr(sfm, "current_scene_path", None) if sfm else None
+        if scene_path:
+            return os.path.abspath(scene_path)
+        return f"scene:{getattr(scene, 'name', '')}"
+
+    def _get_selected_top_level_objects(self, scene):
+        """Return selected objects excluding descendants of other selected objects."""
+        selected_ids = []
+        seen = set()
+        for object_id in self._sel.get_ids():
+            if object_id in seen:
+                continue
+            obj = scene.find_by_id(object_id)
+            if obj is not None:
+                selected_ids.append(object_id)
+                seen.add(object_id)
+
+        selected_set = set(selected_ids)
+        result = []
+        for object_id in selected_ids:
+            obj = scene.find_by_id(object_id)
+            if obj is None:
+                continue
+            parent = obj.get_parent()
+            skip = False
+            while parent is not None:
+                if parent.id in selected_set:
+                    skip = True
+                    break
+                parent = parent.get_parent()
+            if not skip:
+                result.append(obj)
+        return result
+
+    def _copy_selected_objects(self, *, cut: bool = False) -> bool:
+        """Copy or cut the current hierarchy selection into the internal clipboard."""
+        from InfEngine.lib import SceneManager
+
+        scene = SceneManager.instance().get_active_scene()
+        if not scene:
+            return False
+
+        roots = self._get_selected_top_level_objects(scene)
+        if not roots:
+            return False
+
+        scene_sig = self._get_scene_clipboard_signature(scene)
+        entries = []
+        for obj in roots:
+            parent = obj.get_parent()
+            transform = getattr(obj, "transform", None)
+            entries.append({
+                "json": obj.serialize(),
+                "source_scene": scene_sig,
+                "source_parent_id": parent.id if parent else None,
+                "source_sibling_index": transform.get_sibling_index() if transform else 0,
+            })
+
+        self._clipboard_entries = entries
+        self._clipboard_cut = bool(cut)
+
+        if cut:
+            self._cut_selected_objects(roots)
+
+        return True
+
+    def _cut_selected_objects(self, root_objects) -> None:
+        """Delete the selected root objects as a single undoable cut operation."""
+        from InfEngine.engine.undo import CompoundCommand, DeleteGameObjectCommand, UndoManager
+
+        commands = [DeleteGameObjectCommand(obj.id, "Cut GameObject") for obj in root_objects]
+        if not commands:
+            return
+
+        mgr = UndoManager.instance()
+        if mgr:
+            cmd = commands[0] if len(commands) == 1 else CompoundCommand(commands, "Cut GameObjects")
+            mgr.execute(cmd)
+        else:
+            from InfEngine.lib import SceneManager
+            from InfEngine.engine.scene_manager import SceneFileManager
+            scene = SceneManager.instance().get_active_scene()
+            if scene:
+                for obj in root_objects:
+                    live_obj = scene.find_by_id(obj.id)
+                    if live_obj is not None:
+                        scene.destroy_game_object(live_obj)
+                sfm = SceneFileManager.instance()
+                if sfm:
+                    sfm.mark_dirty()
+
+        self._sel.clear()
+        self._notify_selection_changed()
+
+    def _clipboard_has_data(self) -> bool:
+        return bool(self._clipboard_entries)
+
+    def _instantiate_clipboard_entries(self, scene, entries, explicit_parent=None):
+        """Instantiate clipboard JSON payloads into the current scene with fresh IDs."""
+        from InfEngine.engine.prefab_manager import _restore_pending_py_components, _strip_prefab_runtime_fields
+        from InfEngine.engine.scene_manager import SceneFileManager
+
+        created_objects = []
+        scene_sig = self._get_scene_clipboard_signature(scene)
+
+        for entry in entries:
+            parent = explicit_parent
+            if parent is None and entry.get("source_scene") == scene_sig:
+                source_parent_id = entry.get("source_parent_id")
+                if source_parent_id is not None:
+                    parent = scene.find_by_id(source_parent_id)
+
+            try:
+                obj_data = json.loads(entry["json"])
+            except Exception:
+                continue
+
+            _strip_prefab_runtime_fields(obj_data)
+            new_obj = scene.instantiate_from_json(json.dumps(obj_data), parent)
+            if new_obj is not None:
+                created_objects.append(new_obj)
+                if parent is not None:
+                    self._pending_expand_ids.add(parent.id)
+
+        if created_objects and scene.has_pending_py_components():
+            sfm = SceneFileManager.instance()
+            asset_db = getattr(sfm, "_asset_database", None) if sfm else None
+            _restore_pending_py_components(scene, asset_database=asset_db)
+
+        return created_objects
+
+    def _paste_clipboard_objects(self) -> bool:
+        """Paste the clipboard payload into the active scene and record undo."""
+        if not self._clipboard_entries:
+            return False
+
+        from InfEngine.lib import SceneManager
+        from InfEngine.engine.undo import CompoundCommand, CreateGameObjectCommand, UndoManager
+
+        scene = SceneManager.instance().get_active_scene()
+        if not scene:
+            return False
+
+        explicit_parent = None
+        if self._sel.count() == 1:
+            explicit_parent = self.get_selected_object()
+
+        created_objects = self._instantiate_clipboard_entries(scene, self._clipboard_entries, explicit_parent)
+        if not created_objects:
+            return False
+
+        created_ids = [obj.id for obj in created_objects]
+        commands = [CreateGameObjectCommand(object_id, "Paste GameObject") for object_id in created_ids]
+        mgr = UndoManager.instance()
+        if mgr:
+            cmd = commands[0] if len(commands) == 1 else CompoundCommand(commands, "Paste GameObjects")
+            mgr.record(cmd)
+        else:
+            from InfEngine.engine.scene_manager import SceneFileManager
+            sfm = SceneFileManager.instance()
+            if sfm:
+                sfm.mark_dirty()
+
+        self._sel.set_ids(created_ids)
+        self._notify_selection_changed()
+
+        if self._clipboard_cut:
+            self._clipboard_entries = []
+            self._clipboard_cut = False
+
+        return True
+
+    def _handle_clipboard_shortcuts(self, ctx: InfGUIContext) -> None:
+        """Handle hierarchy clipboard shortcuts when the panel is focused."""
+        if not ctx.is_window_focused(0) or ctx.want_text_input():
+            return
+        if not self._is_ctrl(ctx):
+            return
+
+        if ctx.is_key_pressed(KEY_C):
+            self._copy_selected_objects(cut=False)
+            return
+        if ctx.is_key_pressed(KEY_X):
+            self._copy_selected_objects(cut=True)
+            return
+        if ctx.is_key_pressed(KEY_V):
+            self._paste_clipboard_objects()
+
     # ------------------------------------------------------------------
     # Inline rename (F2)
     # ------------------------------------------------------------------
@@ -616,6 +819,8 @@ class HierarchyPanel(EditorPanel):
                 self._pending_shift = False
 
     def on_render_content(self, ctx: InfGUIContext):
+        self._handle_clipboard_shortcuts(ctx)
+
         # Header with scene name (shows file name + dirty indicator)
         from InfEngine.engine.scene_manager import SceneFileManager
         sfm = SceneFileManager.instance()
@@ -740,6 +945,17 @@ class HierarchyPanel(EditorPanel):
                     ctx.end_menu()
                 if ctx.selectable(t("hierarchy.create_empty"), False, 0, 0, 0):
                     self._create_empty_object(parent_id=parent_id_for_new)
+
+            if not self._sel.is_empty() or self._clipboard_has_data():
+                ctx.separator()
+                if not self._sel.is_empty():
+                    if ctx.selectable(t("project.copy"), False, 0, 0, 0):
+                        self._copy_selected_objects(cut=False)
+                    if ctx.selectable(t("project.cut"), False, 0, 0, 0):
+                        self._copy_selected_objects(cut=True)
+                if self._clipboard_has_data():
+                    if ctx.selectable(t("project.paste"), False, 0, 0, 0):
+                        self._paste_clipboard_objects()
             
             if not self._sel.is_empty():
                 ctx.separator()

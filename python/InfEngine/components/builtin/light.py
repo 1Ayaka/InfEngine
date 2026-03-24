@@ -25,6 +25,7 @@ import math
 
 from InfEngine.components.builtin_component import BuiltinComponent, CppProperty
 from InfEngine.components.serialized_field import FieldType
+from InfEngine.gizmos.gizmos import ICON_KIND_LIGHT
 
 
 _DIRECTIONAL_LIGHT = 0
@@ -108,6 +109,7 @@ class Light(BuiltinComponent):
 
     # Scene icon: yellow diamond shown at light position (Unity-style)
     _gizmo_icon_color = (1.0, 0.92, 0.016)
+    _gizmo_icon_kind = ICON_KIND_LIGHT
 
     # ---- Light type ----
     light_type = CppProperty(

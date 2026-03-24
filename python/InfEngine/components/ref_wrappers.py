@@ -129,11 +129,149 @@ class GameObjectRef:
     def __hash__(self):
         return hash(self._persistent_id)
 
+    def instantiate(self, parent=None):
+        """Clone this referenced GameObject in the current scene."""
+        obj = self.resolve()
+        if obj is None:
+            return None
+        try:
+            from InfEngine.lib import SceneManager as _SM
+            scene = _SM.instance().get_active_scene()
+            if scene is None:
+                return None
+            return scene.instantiate_game_object(obj, parent)
+        except Exception as exc:
+            _log.warning("GameObjectRef.instantiate failed: %s", exc)
+            return None
+
     def __repr__(self):
         obj = self.resolve()
         if obj is not None:
             return f"GameObjectRef('{obj.name}', id={self._persistent_id})"
         return f"GameObjectRef(None, id={self._persistent_id})"
+
+
+# ============================================================================
+# PrefabRef — Asset reference to a .prefab file (no scene instantiation)
+# ============================================================================
+
+class PrefabRef:
+    """Reference to a prefab asset stored on disk.
+
+    Unlike ``GameObjectRef`` which points to a live scene object,
+    ``PrefabRef`` stores the asset GUID and file-path hint of a
+    ``.prefab`` file.  Use :meth:`instantiate` to create a new
+    scene object from the prefab.
+
+    Compatible with ``FieldType.GAME_OBJECT`` — a single field can
+    hold either a ``GameObjectRef`` or a ``PrefabRef``.
+    """
+
+    __slots__ = ("_guid", "_path_hint")
+
+    def __init__(self, guid: str = "", path_hint: str = ""):
+        self._guid: str = guid
+        self._path_hint: str = path_hint
+
+    # -- public properties -------------------------------------------------
+
+    @property
+    def guid(self) -> str:
+        return self._guid
+
+    @property
+    def path_hint(self) -> str:
+        return self._path_hint
+
+    @property
+    def persistent_id(self) -> int:
+        """Always 0 — a prefab has no scene-persistent ID."""
+        return 0
+
+    @property
+    def name(self) -> str:
+        """Human-readable display name derived from the file path."""
+        import os
+        if self._path_hint:
+            return os.path.splitext(os.path.basename(self._path_hint))[0]
+        return self._guid[:8] if self._guid else "None"
+
+    # -- resolution --------------------------------------------------------
+
+    def resolve(self):
+        """A prefab is not a live scene object — always returns ``None``.
+
+        Use :meth:`instantiate` to create a scene instance.
+        """
+        return None
+
+    def instantiate(self, parent=None):
+        """Create a new GameObject from this prefab in the active scene."""
+        if not self._guid and not self._path_hint:
+            return None
+        try:
+            from InfEngine.engine.prefab_manager import instantiate_prefab
+            kwargs: dict = {}
+            if parent is not None:
+                kwargs["parent"] = parent
+
+            # Try GUID-based instantiation first
+            if self._guid:
+                from InfEngine.lib import AssetRegistry
+                adb = None
+                registry = AssetRegistry.instance()
+                if registry:
+                    adb = registry.get_asset_database()
+                result = instantiate_prefab(guid=self._guid, asset_database=adb, **kwargs)
+                if result is not None:
+                    return result
+
+            # Fallback to file-path
+            if self._path_hint:
+                import os
+                if os.path.isfile(self._path_hint):
+                    return instantiate_prefab(file_path=self._path_hint, **kwargs)
+        except Exception as exc:
+            _log.warning("PrefabRef.instantiate failed: %s", exc)
+        return None
+
+    # -- serialization -----------------------------------------------------
+
+    def _serialize(self) -> dict:
+        d: dict = {"__prefab_ref__": self._guid}
+        if self._path_hint:
+            d["__path_hint__"] = self._path_hint
+        return d
+
+    @classmethod
+    def _from_dict(cls, guid: str, path_hint: str = "") -> "PrefabRef":
+        return cls(guid=guid, path_hint=path_hint)
+
+    # -- dunder helpers ----------------------------------------------------
+
+    def __bool__(self) -> bool:
+        return bool(self._guid or self._path_hint)
+
+    def __copy__(self):
+        return type(self)(guid=self._guid, path_hint=self._path_hint)
+
+    def __deepcopy__(self, memo):
+        copied = type(self)(guid=self._guid, path_hint=self._path_hint)
+        memo[id(self)] = copied
+        return copied
+
+    def __eq__(self, other):
+        if other is None:
+            return not self.__bool__()
+        if isinstance(other, PrefabRef):
+            return self._guid == other._guid and self._path_hint == other._path_hint
+        return NotImplemented
+
+    def __hash__(self):
+        return hash((self._guid, self._path_hint))
+
+    def __repr__(self):
+        return f"PrefabRef(guid='{self._guid}', path='{self._path_hint}')"
 
 
 # ============================================================================

@@ -217,12 +217,10 @@ add_custom_target(package_and_install_python ALL
         -P "${CMAKE_SOURCE_DIR}/cmake/ensure_python_packaging_tools.cmake"
 
     COMMAND ${CMAKE_COMMAND} -E echo "Building Python package via '${Python3_EXECUTABLE} -m build'..."
-    COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_SOURCE_DIR}" 
-        "${Python3_EXECUTABLE}" -m build --no-isolation --outdir "${CMAKE_SOURCE_DIR}/dist"
+    COMMAND "${Python3_EXECUTABLE}" -m build --no-isolation --outdir "${CMAKE_SOURCE_DIR}/dist"
 
     COMMAND ${CMAKE_COMMAND} -E echo "Installing built wheel via pip..."
-    COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_SOURCE_DIR}" 
-        ${CMAKE_COMMAND}
+    COMMAND ${CMAKE_COMMAND}
         -DINFENGINE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
         -DPYTHON_EXECUTABLE=${Python3_EXECUTABLE}
         -P "${CMAKE_SOURCE_DIR}/install_wheel.cmake"
@@ -235,6 +233,7 @@ add_custom_target(package_and_install_python ALL
             -DPYTHON_DIR=${CMAKE_SOURCE_DIR}/python
             -P ${CMAKE_SOURCE_DIR}/cmake/clean_python_pycache.cmake
 
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMENT "Python packaging and installation after native module build"
 )
 

@@ -7,7 +7,6 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -21,44 +20,48 @@ from hub_utils import get_bundle_dir, get_hub_data_dir, is_frozen
 
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _RUNTIME_ROOT = Path.home() / ".infengine" / "runtime"
-_GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 
 
-def _runtime_zip_info_for_machine() -> tuple[str, str]:
-    """Return (filename, url) for the Python 3.12 embeddable zip package."""
+def _first_existing_path(paths: list[str]) -> Optional[str]:
+    for path in paths:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def _existing_dirs(paths: list[str]) -> list[str]:
+    return [path for path in paths if path and os.path.isdir(path)]
+
+
+def _runtime_installer_info_for_machine() -> tuple[str, str]:
+    """Return (filename, url) for the official Python 3.12 Windows installer."""
     machine = (platform.machine() or "").lower()
     if machine in {"amd64", "x86_64"}:
         return (
-            "python-3.12.8-embed-amd64.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
+            "python-3.12.8-amd64.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
         )
     if machine in {"arm64", "aarch64"}:
         return (
-            "python-3.12.8-embed-arm64.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-arm64.zip",
+            "python-3.12.8-arm64.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-arm64.exe",
         )
     if machine in {"x86", "i386", "i686"}:
         return (
-            "python-3.12.8-embed-win32.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-win32.zip",
+            "python-3.12.8.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8.exe",
         )
     return (
-        "python-3.12.8-embed-amd64.zip",
-        "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
+        "python-3.12.8-amd64.exe",
+        "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
     )
 
 
-def _enable_site_packages(python_root: str) -> None:
-    """Uncomment 'import site' in the ._pth file to enable site-packages."""
-    for name in os.listdir(python_root):
-        if name.endswith("._pth"):
-            pth_path = os.path.join(python_root, name)
-            with open(pth_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            content = content.replace("#import site", "import site")
-            with open(pth_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            break
+def _is_embeddable_python_root(python_root: str) -> bool:
+    try:
+        return any(name.lower().endswith("._pth") for name in os.listdir(python_root))
+    except OSError:
+        return False
 
 
 class PythonRuntimeError(RuntimeError):
@@ -69,8 +72,14 @@ class PythonRuntimeManager:
     def __init__(self) -> None:
         _RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
 
+    def bundled_runtime_dir(self) -> str:
+        return os.path.join(get_bundle_dir(), "InfEngineHubData", "runtime")
+
+    def installed_runtime_dir(self) -> str:
+        return os.path.join(get_hub_data_dir(), "runtime")
+
     def installer_path(self) -> str:
-        name, _ = _runtime_zip_info_for_machine()
+        name, _ = _runtime_installer_info_for_machine()
         if is_frozen():
             bundled = self.bundled_installer_path()
             if os.path.isfile(bundled):
@@ -78,8 +87,22 @@ class PythonRuntimeManager:
         return str(_RUNTIME_ROOT / name)
 
     def bundled_installer_path(self) -> str:
-        name, _ = _runtime_zip_info_for_machine()
-        return os.path.join(get_bundle_dir(), "InfEngineHubData", "runtime", name)
+        name, _ = _runtime_installer_info_for_machine()
+        return os.path.join(self.bundled_runtime_dir(), name)
+
+    def _get_pip_candidates(self) -> list[str]:
+        return [
+            os.path.join(self.installed_runtime_dir(), "get-pip.py"),
+            os.path.join(self.bundled_runtime_dir(), "get-pip.py"),
+            str(_RUNTIME_ROOT / "get-pip.py"),
+        ]
+
+    def _wheelhouse_dirs(self) -> list[str]:
+        return _existing_dirs([
+            os.path.join(self.installed_runtime_dir(), "wheels"),
+            os.path.join(self.bundled_runtime_dir(), "wheels"),
+            str(_RUNTIME_ROOT / "wheels"),
+        ])
 
     def private_runtime_root(self) -> str:
         return os.path.join(get_hub_data_dir(), "python312")
@@ -172,7 +195,7 @@ class PythonRuntimeManager:
         on_progress: Optional[Callable[[int, int], None]] = None,
     ) -> str:
         installer = Path(self.installer_path())
-        _, installer_url = _runtime_zip_info_for_machine()
+        _, installer_url = _runtime_installer_info_for_machine()
         if installer.is_file():
             return str(installer)
 
@@ -211,49 +234,43 @@ class PythonRuntimeManager:
         os.replace(tmp_path, installer)
         return str(installer)
 
-    def install_runtime(self, zip_path: str) -> None:
+    def install_runtime(self, installer_path: str) -> None:
         if sys.platform != "win32":
             raise PythonRuntimeError("Automatic Python installation is only supported on Windows.")
 
         target_dir = self.private_runtime_root()
         python_exe = os.path.join(target_dir, "python.exe")
 
-        # Extract the embeddable zip.
         shutil.rmtree(target_dir, ignore_errors=True)
         os.makedirs(target_dir, exist_ok=True)
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(target_dir)
+
+        args = [
+            installer_path,
+            "/quiet",
+            "InstallAllUsers=0",
+            f'TargetDir={target_dir}',
+            "AssociateFiles=0",
+            "CompileAll=0",
+            "Include_debug=0",
+            "Include_dev=0",
+            "Include_doc=0",
+            "Include_launcher=0",
+            "Include_pip=1",
+            "Include_symbols=0",
+            "Include_tcltk=1",
+            "Include_test=0",
+            "LauncherOnly=0",
+            "PrependPath=0",
+            "Shortcuts=0",
+            "SimpleInstall=1",
+        ]
+        self._run_command(args, timeout=1800)
 
         if not os.path.isfile(python_exe):
             raise PythonRuntimeError(
-                "Python 3.12 executable was not found after extraction:\n"
+                "Python 3.12 executable was not found after installation:\n"
                 f"{python_exe}"
             )
-
-        # Enable site-packages.
-        _enable_site_packages(target_dir)
-
-        # Bootstrap pip.
-        pip_exe = os.path.join(target_dir, "Scripts", "pip.exe")
-        if not os.path.isfile(pip_exe):
-            get_pip_path = str(_RUNTIME_ROOT / "get-pip.py")
-            if not os.path.isfile(get_pip_path):
-                req = urllib.request.Request(_GET_PIP_URL)
-                req.add_header("User-Agent", "InfEngine-Hub/1.0")
-                with urllib.request.urlopen(req, timeout=60) as resp, \
-                     open(get_pip_path, "wb") as f:
-                    shutil.copyfileobj(resp, f)
-            self._run_command(
-                [python_exe, get_pip_path, "--no-warn-script-location"],
-                timeout=600,
-            )
-
-        # Install virtualenv (stdlib venv is not in the embeddable distribution).
-        self._run_command(
-            [python_exe, "-m", "pip", "install", "virtualenv", "-q",
-             "--no-warn-script-location"],
-            timeout=600,
-        )
 
     def create_venv(self, venv_path: str) -> str:
         python_exe = self.ensure_runtime()
@@ -293,7 +310,7 @@ class PythonRuntimeManager:
         shutil.rmtree(template_root, ignore_errors=True)
 
         completed = self._run_command(
-            [python_exe, "-m", "virtualenv", "--copies", temp_root],
+            [python_exe, "-m", "venv", "--copies", temp_root],
             timeout=600,
         )
         if completed.returncode != 0:
@@ -311,7 +328,7 @@ class PythonRuntimeManager:
         cfg_path = os.path.join(venv_root, "pyvenv.cfg")
         base_home = os.path.dirname(base_python)
         version = self._get_python_version(base_python)
-        command = f'"{base_python}" -m virtualenv --copies "{venv_root}"'
+        command = f'"{base_python}" -m venv --copies "{venv_root}"'
 
         with open(cfg_path, "w", encoding="utf-8") as f:
             f.write(f"home = {base_home}\n")
@@ -416,6 +433,9 @@ class PythonRuntimeManager:
 
     def _is_valid_python312(self, python_exe: str) -> bool:
         if not python_exe or not os.path.isfile(python_exe):
+            return False
+
+        if _is_embeddable_python_root(os.path.dirname(python_exe)):
             return False
 
         completed = self._run_command(

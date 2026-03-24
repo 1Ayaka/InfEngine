@@ -265,10 +265,12 @@ def _serialize_so_value(value: Any) -> Any:
     if isinstance(value, _Enum):
         return {"__enum__": type(value).__qualname__, "name": value.name}
 
-    # GameObjectRef / MaterialRef
-    from .ref_wrappers import GameObjectRef, MaterialRef
+    # GameObjectRef / PrefabRef / MaterialRef
+    from .ref_wrappers import GameObjectRef, MaterialRef, PrefabRef
     if isinstance(value, GameObjectRef):
         return {"__game_object__": value.persistent_id}
+    if isinstance(value, PrefabRef):
+        return value._serialize()
     if isinstance(value, MaterialRef):
         d: dict = {"__material_ref__": value.guid}
         if value._path_hint:
@@ -411,6 +413,10 @@ def _deserialize_so_value(value: Any, field_meta) -> Any:
         if "__game_object__" in value:
             from .ref_wrappers import GameObjectRef
             return GameObjectRef(persistent_id=int(value["__game_object__"]))
+        if "__prefab_ref__" in value:
+            from .ref_wrappers import PrefabRef
+            return PrefabRef(guid=value["__prefab_ref__"],
+                             path_hint=value.get("__path_hint__", ""))
         if "__material_ref__" in value:
             from .ref_wrappers import MaterialRef
             return MaterialRef(guid=value["__material_ref__"],

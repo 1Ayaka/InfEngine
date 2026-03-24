@@ -40,6 +40,10 @@ class GizmosDrawCallBuffer
     /// with the game object's own mesh buffers.
     static constexpr uint64_t ICON_ID_PREFIX = 0xEDED713D00000000ULL;
 
+    static constexpr uint32_t ICON_KIND_DEFAULT = 0;
+    static constexpr uint32_t ICON_KIND_CAMERA = 1;
+    static constexpr uint32_t ICON_KIND_LIGHT = 2;
+
     GizmosDrawCallBuffer() = default;
     ~GizmosDrawCallBuffer() = default;
 
@@ -69,9 +73,10 @@ class GizmosDrawCallBuffer
      */
     struct IconEntry
     {
-        glm::vec3 position{0.0f}; ///< World-space position
-        uint64_t objectId = 0;    ///< Owning GameObject ID (for picking)
-        glm::vec3 color{1.0f};    ///< Icon tint color (RGB)
+        glm::vec3 position{0.0f};              ///< World-space position
+        uint64_t objectId = 0;                 ///< Owning GameObject ID (for picking)
+        glm::vec3 color{1.0f};                 ///< Icon tint color (RGB)
+        uint32_t iconKind = ICON_KIND_DEFAULT; ///< Built-in icon kind for material selection
     };
 
     /**
@@ -141,11 +146,16 @@ class GizmosDrawCallBuffer
      *   - Constant angular size relative to distance from camera
      *
      * @param iconMaterial  Material for icon rendering (TRIANGLE_LIST gizmo shader)
-     * @param cameraPos     Editor camera world position (for billboard orientation)
+    * @param cameraPos     Editor camera world position (for constant-size scaling)
+    * @param cameraRight   Editor camera world-space right axis
+    * @param cameraUp      Editor camera world-space up axis
      * @return DrawCallResult containing all icon draw calls
      */
-    [[nodiscard]] DrawCallResult GetIconDrawCalls(std::shared_ptr<InfMaterial> iconMaterial,
-                                                  const glm::vec3 &cameraPos) const;
+    [[nodiscard]] DrawCallResult GetIconDrawCalls(std::shared_ptr<InfMaterial> defaultIconMaterial,
+                                                  std::shared_ptr<InfMaterial> cameraIconMaterial,
+                                                  std::shared_ptr<InfMaterial> lightIconMaterial,
+                      const glm::vec3 &cameraPos, const glm::vec3 &cameraRight,
+                      const glm::vec3 &cameraUp) const;
 
     /**
      * @brief Get icon entries for picking tests.
@@ -157,6 +167,9 @@ class GizmosDrawCallBuffer
 
     /// Angular size factor: icon world-size = distance * ICON_SIZE_FACTOR
     static constexpr float ICON_SIZE_FACTOR = 0.018f;
+
+    /// Minimum half-size used when an icon is extremely close to the camera.
+    static constexpr float ICON_MIN_WORLD_SIZE = 0.05f;
 
   private:
     std::vector<Vertex> m_vertices;

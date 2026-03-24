@@ -139,6 +139,12 @@ class InfShaderLoader
     /// Register an additional directory to scan for @import resolution.
     static void AddShaderSearchPath(const std::string &dir);
 
+    /// Get the currently registered shader search paths.
+    static const std::vector<std::string> &GetShaderSearchPaths()
+    {
+        return s_additionalSearchPaths;
+    }
+
     bool LoadMeta(const char *content, const std::string &filePath, InfResourceMeta &metaData);
     void CreateMeta(const char *content, size_t contentSize, const std::string &filePath, InfResourceMeta &metaData);
 

@@ -14,6 +14,7 @@ Features:
 
 import os
 import json
+import sys
 import threading
 from typing import Dict, List, Optional
 
@@ -72,6 +73,148 @@ def save_build_settings(settings: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2, ensure_ascii=False)
+
+
+def _win32_pick_folder(title: str) -> Optional[str]:
+    import ctypes
+    import ctypes.wintypes as wt
+
+    BIF_RETURNONLYFSDIRS = 0x00000001
+    BIF_NEWDIALOGSTYLE = 0x00000040
+    MAX_PATH = 260
+
+    class BROWSEINFOW(ctypes.Structure):
+        _fields_ = [
+            ("hwndOwner", wt.HWND),
+            ("pidlRoot", ctypes.c_void_p),
+            ("pszDisplayName", wt.LPWSTR),
+            ("lpszTitle", wt.LPCWSTR),
+            ("ulFlags", wt.UINT),
+            ("lpfn", ctypes.c_void_p),
+            ("lParam", ctypes.c_void_p),
+            ("iImage", ctypes.c_int),
+        ]
+
+    display_name = ctypes.create_unicode_buffer(MAX_PATH)
+    browse = BROWSEINFOW()
+    browse.pszDisplayName = ctypes.cast(display_name, wt.LPWSTR)
+    browse.lpszTitle = title
+    browse.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE
+
+    shell32 = ctypes.windll.shell32
+    ole32 = ctypes.windll.ole32
+    pidl = shell32.SHBrowseForFolderW(ctypes.byref(browse))
+    if not pidl:
+        return None
+    try:
+        path_buf = ctypes.create_unicode_buffer(MAX_PATH)
+        if shell32.SHGetPathFromIDListW(pidl, path_buf):
+            return path_buf.value
+        return None
+    finally:
+        ole32.CoTaskMemFree(pidl)
+
+
+def _win32_pick_file(title: str, filter_text: str) -> Optional[str]:
+    import ctypes
+    import ctypes.wintypes as wt
+
+    OFN_FILEMUSTEXIST = 0x00001000
+    OFN_PATHMUSTEXIST = 0x00000800
+    OFN_NOCHANGEDIR = 0x00000008
+    OFN_EXPLORER = 0x00080000
+    MAX_PATH = 4096
+
+    class OPENFILENAMEW(ctypes.Structure):
+        _fields_ = [
+            ("lStructSize", wt.DWORD),
+            ("hwndOwner", wt.HWND),
+            ("hInstance", wt.HINSTANCE),
+            ("lpstrFilter", wt.LPCWSTR),
+            ("lpstrCustomFilter", wt.LPWSTR),
+            ("nMaxCustFilter", wt.DWORD),
+            ("nFilterIndex", wt.DWORD),
+            ("lpstrFile", wt.LPWSTR),
+            ("nMaxFile", wt.DWORD),
+            ("lpstrFileTitle", wt.LPWSTR),
+            ("nMaxFileTitle", wt.DWORD),
+            ("lpstrInitialDir", wt.LPCWSTR),
+            ("lpstrTitle", wt.LPCWSTR),
+            ("Flags", wt.DWORD),
+            ("nFileOffset", wt.WORD),
+            ("nFileExtension", wt.WORD),
+            ("lpstrDefExt", wt.LPCWSTR),
+            ("lCustData", ctypes.c_void_p),
+            ("lpfnHook", ctypes.c_void_p),
+            ("lpTemplateName", wt.LPCWSTR),
+            ("pvReserved", ctypes.c_void_p),
+            ("dwReserved", wt.DWORD),
+            ("FlagsEx", wt.DWORD),
+        ]
+
+    buf = ctypes.create_unicode_buffer(MAX_PATH)
+    ofn = OPENFILENAMEW()
+    ofn.lStructSize = ctypes.sizeof(OPENFILENAMEW)
+    ofn.lpstrFilter = filter_text
+    ofn.lpstrFile = ctypes.cast(buf, wt.LPWSTR)
+    ofn.nMaxFile = MAX_PATH
+    ofn.lpstrTitle = title
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER
+
+    if ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+        return buf.value
+    return None
+
+
+def _pick_folder_dialog(title: str) -> Optional[str]:
+    if sys.platform == "win32":
+        try:
+            return _win32_pick_folder(title)
+        except Exception as exc:
+            Debug.log_warning(f"Win32 folder dialog failed: {exc}")
+
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        return filedialog.askdirectory(parent=root, title=title)
+    finally:
+        root.destroy()
+
+
+def _pick_file_dialog(title: str) -> Optional[str]:
+    if sys.platform == "win32":
+        try:
+            return _win32_pick_file(
+                title,
+                "Images (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0"
+                "Videos (*.mp4;*.avi;*.mov;*.mkv;*.webm)\0*.mp4;*.avi;*.mov;*.mkv;*.webm\0"
+                "All Files (*.*)\0*.*\0\0",
+            )
+        except Exception as exc:
+            Debug.log_warning(f"Win32 open-file dialog failed: {exc}")
+
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        return filedialog.askopenfilename(
+            parent=root,
+            title=title,
+            filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.bmp"),
+                ("Videos", "*.mp4 *.avi *.mov *.mkv *.webm"),
+                ("All Files", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
 
 
 # ---------------------------------------------------------------------------
@@ -260,20 +403,12 @@ class BuildSettingsPanel:
     def _browse_output_dir(self):
         def _do():
             try:
-                import tkinter as tk
-                from tkinter import filedialog
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes("-topmost", True)
-                folder = filedialog.askdirectory(
-                    parent=root, title="Choose Output Directory"
-                )
-                root.destroy()
+                folder = _pick_folder_dialog("Choose Output Directory")
                 if folder:
                     self._output_dir = folder
                     self._save()
-            except Exception:
-                pass
+            except Exception as exc:
+                Debug.log_warning(f"Build Settings output directory browse failed: {exc}")
         threading.Thread(target=_do, daemon=True).start()
 
     # ------------------------------------------------------------------
@@ -409,21 +544,7 @@ class BuildSettingsPanel:
     def _browse_splash_file(self):
         def _do():
             try:
-                import tkinter as tk
-                from tkinter import filedialog
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes("-topmost", True)
-                path = filedialog.askopenfilename(
-                    parent=root,
-                    title="Add Splash Item",
-                    filetypes=[
-                        ("Images", "*.png *.jpg *.jpeg *.bmp"),
-                        ("Videos", "*.mp4 *.avi *.mov *.mkv *.webm"),
-                        ("All Files", "*.*"),
-                    ],
-                )
-                root.destroy()
+                path = _pick_file_dialog("Add Splash Item")
                 if path:
                     ext = os.path.splitext(path)[1].lower()
                     itype = "video" if ext in _VIDEO_EXTS else "image"
@@ -435,8 +556,8 @@ class BuildSettingsPanel:
                         "fade_out": 0.5,
                     })
                     self._save()
-            except Exception:
-                pass
+            except Exception as exc:
+                Debug.log_warning(f"Build Settings splash picker failed: {exc}")
         threading.Thread(target=_do, daemon=True).start()
 
     # ------------------------------------------------------------------

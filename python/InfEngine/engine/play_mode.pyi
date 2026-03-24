@@ -59,7 +59,7 @@ class PlayModeManager:
     def enter_play_mode(self) -> bool:
         """Enter play mode. Returns True on success."""
         ...
-    def exit_play_mode(self) -> bool:
+    def exit_play_mode(self, on_complete: Optional[Callable[[bool], None]] = ...) -> bool:
         """Exit play mode and restore the scene. Returns True on success."""
         ...
     def pause(self) -> bool:

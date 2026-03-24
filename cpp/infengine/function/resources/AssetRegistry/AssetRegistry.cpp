@@ -288,6 +288,8 @@ void AssetRegistry::InitializeBuiltinMaterials()
     registerBuiltin("GridMaterial", InfMaterial::CreateGridMaterial());
     registerBuiltin("ComponentGizmosMaterial", InfMaterial::CreateComponentGizmosMaterial());
     registerBuiltin("ComponentGizmoIconMaterial", InfMaterial::CreateComponentGizmoIconMaterial());
+    registerBuiltin("ComponentGizmoCameraIconMaterial", InfMaterial::CreateComponentGizmoCameraIconMaterial());
+    registerBuiltin("ComponentGizmoLightIconMaterial", InfMaterial::CreateComponentGizmoLightIconMaterial());
     registerBuiltin("EditorToolsMaterial", InfMaterial::CreateEditorToolsMaterial());
     registerBuiltin("SkyboxProcedural", InfMaterial::CreateSkyboxProceduralMaterial());
     registerBuiltin("ErrorMaterial", InfMaterial::CreateErrorMaterial());

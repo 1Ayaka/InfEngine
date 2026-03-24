@@ -30,6 +30,10 @@ from typing import Tuple, Optional, List
 # Type alias for 3-component tuples
 Vec3 = Tuple[float, float, float]
 
+ICON_KIND_DEFAULT = 0
+ICON_KIND_CAMERA = 1
+ICON_KIND_LIGHT = 2
+
 # Try to import C++ gizmo geometry helpers (available after engine build)
 try:
     from InfEngine.lib import generate_wire_sphere as _cpp_wire_sphere
@@ -58,8 +62,8 @@ class Gizmos:
     # Each entry: (vertex_list, index_list, world_matrix_16_floats)
     _draw_batches: List[Tuple[List[List[float]], List[int], List[float]]] = []
 
-    # Icon entries: (position_vec3, object_id_int, color_vec3)
-    _icon_entries: List[Tuple[Vec3, int, Tuple[float, float, float]]] = []
+    # Icon entries: (position_vec3, object_id_int, color_vec3, icon_kind_int)
+    _icon_entries: List[Tuple[Vec3, int, Tuple[float, float, float], int]] = []
 
     # ---- Internal ----
     _identity_matrix: List[float] = [
@@ -116,7 +120,8 @@ class Gizmos:
 
     @classmethod
     def draw_icon(cls, position: Vec3, object_id: int,
-                  color: Optional[Tuple[float, float, float]] = None):
+                  color: Optional[Tuple[float, float, float]] = None,
+                  icon_kind: int = ICON_KIND_DEFAULT):
         """Register a clickable icon at *position* for the given GameObject.
 
         Icons are rendered as camera-facing diamond quads in the scene view.
@@ -126,9 +131,10 @@ class Gizmos:
             position: World-space position for the icon center.
             object_id: The owning GameObject's ID (used for picking).
             color: Icon tint color ``(r, g, b)``.  Defaults to ``Gizmos.color``.
+            icon_kind: Built-in icon kind used by the native billboard material.
         """
         c = color if color is not None else cls.color
-        cls._icon_entries.append((position, object_id, c))
+        cls._icon_entries.append((position, object_id, c, int(icon_kind)))
 
     # ====================================================================
     # Primitive: wire cube
@@ -416,12 +422,13 @@ class Gizmos:
         """Pack all icon entries into flat ``array.array`` buffers for C++ upload.
 
         Returns:
-            ``(pos_color_buf, id_buf, icon_count)``
+                        ``(pos_color_buf, id_buf, kind_buf, icon_count)``
             using stdlib ``array.array`` (no numpy), or ``None`` if empty.
 
             - ``pos_color_buf``: float32 array ``[x, y, z, r, g, b]`` per icon
             - ``id_buf``: uint32 array ``[lo, hi]`` per icon (64-bit object ID
               split into two 32-bit halves)
+                        - ``kind_buf``: uint32 array ``[icon_kind]`` per icon
         """
         if not cls._icon_entries:
             return None
@@ -430,8 +437,9 @@ class Gizmos:
 
         pos_color_buf = _array.array('f')   # float32: x,y,z,r,g,b per icon
         id_buf = _array.array('I')          # uint32: lo,hi per icon
+        kind_buf = _array.array('I')        # uint32: icon kind per icon
 
-        for position, object_id, color in cls._icon_entries:
+        for position, object_id, color, icon_kind in cls._icon_entries:
             pos_color_buf.extend([
                 position[0], position[1], position[2],
                 color[0], color[1], color[2],
@@ -440,5 +448,6 @@ class Gizmos:
             hi = (object_id >> 32) & 0xFFFFFFFF
             id_buf.append(lo)
             id_buf.append(hi)
+            kind_buf.append(int(icon_kind))
 
-        return pos_color_buf, id_buf, len(cls._icon_entries)
+        return pos_color_buf, id_buf, kind_buf, len(cls._icon_entries)

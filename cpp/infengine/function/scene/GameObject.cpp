@@ -1,8 +1,10 @@
 #include "GameObject.h"
+#include "BoxCollider.h"
 #include "Collider.h"
 #include "ComponentFactory.h"
 #include "MeshRenderer.h"
 #include "PyComponentProxy.h"
+#include "Rigidbody.h"
 #include "Scene.h"
 #include "physics/PhysicsWorld.h"
 #include <InfLog.h>
@@ -317,6 +319,12 @@ void GameObject::PostAddComponent(Component *component)
 {
     if (!component || !m_scene) {
         return;
+    }
+
+    // Auto-add a BoxCollider when Rigidbody is added to an object without
+    // any Collider.  Physics engines require at least one shape for a body.
+    if (dynamic_cast<Rigidbody *>(component) && !HasComponent<Collider>()) {
+        AddComponent<BoxCollider>();
     }
 
     // Always awaken components that want edit-mode lifecycle (all pure C++

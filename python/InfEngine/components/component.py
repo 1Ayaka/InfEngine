@@ -1101,6 +1101,11 @@ class InfComponent:
         if isinstance(value, GameObjectRef):
             return {"__game_object__": value.persistent_id}
 
+        # PrefabRef (asset reference) — store GUID + path hint
+        from InfEngine.components.ref_wrappers import PrefabRef
+        if isinstance(value, PrefabRef):
+            return value._serialize()
+
         # MaterialRef (null-safe wrapper) — store GUID + path_hint
         if isinstance(value, MaterialRef):
             d = {"__material_ref__": value.guid}
@@ -1254,6 +1259,12 @@ class InfComponent:
                 from InfEngine.components.ref_wrappers import GameObjectRef
                 obj_id = int(value["__game_object__"])
                 return GameObjectRef(persistent_id=obj_id)
+
+            if "__prefab_ref__" in value:
+                from InfEngine.components.ref_wrappers import PrefabRef
+                guid = value["__prefab_ref__"]
+                path_hint = value.get("__path_hint__", "")
+                return PrefabRef(guid=guid, path_hint=path_hint)
 
             if "__material_ref__" in value:
                 from InfEngine.components.ref_wrappers import MaterialRef

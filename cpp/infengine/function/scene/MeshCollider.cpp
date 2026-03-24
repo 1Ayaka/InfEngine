@@ -3,7 +3,7 @@
  * @brief MeshCollider implementation — triangle mesh or convex hull shape creation.
  */
 
-// Jolt/Jolt.h MUST be the very first include in this TU
+// Jolt/Jolt.h MUST be the very first Jolt include in this TU
 #include <Jolt/Jolt.h>
 #include <Jolt/Geometry/ConvexHullBuilder.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -18,9 +18,9 @@
 #include "MeshRenderer.h"
 #include "Rigidbody.h"
 
+#include <cfloat>
 #include <core/log/InfLog.h>
 #include <nlohmann/json.hpp>
-#include <cfloat>
 #include <unordered_map>
 
 namespace infengine
@@ -112,9 +112,8 @@ static void CookMeshGeometry(std::vector<glm::vec3> &vertices, std::vector<uint3
 // fall back to checking the scale determinant (negative ⇒ odd number of axis
 // reflections which flips winding).
 // ---------------------------------------------------------------------------
-static void EnsureOutwardWinding(std::vector<glm::vec3> &vertices,
-                                 std::vector<uint32_t>  &indices,
-                                 const glm::vec3        &worldScale)
+static void EnsureOutwardWinding(std::vector<glm::vec3> &vertices, std::vector<uint32_t> &indices,
+                                 const glm::vec3 &worldScale)
 {
     if (indices.size() < 3)
         return;
@@ -135,9 +134,8 @@ static void EnsureOutwardWinding(std::vector<glm::vec3> &vertices,
         mn = glm::min(mn, v);
         mx = glm::max(mx, v);
     }
-    double aabbVol = static_cast<double>(mx.x - mn.x) *
-                     static_cast<double>(mx.y - mn.y) *
-                     static_cast<double>(mx.z - mn.z);
+    double aabbVol =
+        static_cast<double>(mx.x - mn.x) * static_cast<double>(mx.y - mn.y) * static_cast<double>(mx.z - mn.z);
 
     bool needFlip = false;
     if (std::abs(signedVol6) > aabbVol * 0.01) {
@@ -152,8 +150,8 @@ static void EnsureOutwardWinding(std::vector<glm::vec3> &vertices,
         for (size_t i = 0; i + 2 < indices.size(); i += 3) {
             std::swap(indices[i + 1], indices[i + 2]);
         }
-        INFLOG_INFO("MeshCollider: flipped triangle winding (signed-vol=",
-                    signedVol6, ", aabb-vol=", aabbVol, ", need-flip=true)");
+        INFLOG_INFO("MeshCollider: flipped triangle winding (signed-vol=", signedVol6, ", aabb-vol=", aabbVol,
+                    ", need-flip=true)");
     }
 }
 

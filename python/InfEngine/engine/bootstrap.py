@@ -451,11 +451,13 @@ class EditorBootstrap:
     def _get_structural_types(cls):
         if cls._STRUCTURAL_CMD_TYPES is None:
             from InfEngine.engine.undo import (
+                CompoundCommand,
                 CreateGameObjectCommand, DeleteGameObjectCommand,
                 ReparentCommand, MoveGameObjectCommand,
                 AddPyComponentCommand, RemovePyComponentCommand,
             )
             cls._STRUCTURAL_CMD_TYPES = (
+                CompoundCommand,
                 CreateGameObjectCommand, DeleteGameObjectCommand,
                 ReparentCommand, MoveGameObjectCommand,
                 AddPyComponentCommand, RemovePyComponentCommand,

@@ -174,10 +174,40 @@ Hub 是一个独立的启动器（PySide6 + PyInstaller 构建），用于在不
 Hub 以一键安装程序（`InfEngineHubInstaller.exe`）的形式发布，安装过程：
 
 1. 将 Hub 应用解压到你选择的目录
-2. 下载并安装 Python 3.12 嵌入式运行时
+2. 安装 Python 3.12 嵌入式运行时（若安装包内已预置离线资源则不再联网下载）
 3. 创建可复用的带 pip 的 venv 模板
 4. 在 Windows 添加/删除程序中注册
 5. 创建开始菜单快捷方式
+
+### 预打包离线 Python 运行时
+
+如果你的国内用户下载 Python 很慢，可以在构建安装包前，把离线资源放进 `packaging/runtime/`，构建出的 `InfEngineHubInstaller.exe` 和独立 Hub 都会优先使用这些本地文件。
+
+推荐放入：
+
+- `python-3.12.8-embed-amd64.zip`
+- `get-pip.py`
+- `wheels/` 目录中的 `virtualenv` 及其依赖 wheel
+
+目录示例：
+
+```text
+packaging/runtime/
+    python-3.12.8-embed-amd64.zip
+    get-pip.py
+    wheels/
+        virtualenv-*.whl
+        distlib-*.whl
+        filelock-*.whl
+        platformdirs-*.whl
+```
+
+这样安装器会按以下顺序处理：
+
+1. 直接使用安装包内置的 Python zip
+2. 直接使用内置的 `get-pip.py`
+3. 优先从内置 `wheels/` 离线安装 `virtualenv`
+4. 只有本地资源缺失时才回退到联网下载
 
 ### 构建 Hub（开发者用）
 

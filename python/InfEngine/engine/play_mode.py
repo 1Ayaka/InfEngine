@@ -288,7 +288,7 @@ class PlayModeManager:
         ], on_done=on_done)
         return True
     
-    def exit_play_mode(self) -> bool:
+    def exit_play_mode(self, on_complete: Optional[Callable[[bool], None]] = None) -> bool:
         """
         Exit play mode and return to edit mode.
         Restores scene state to before play mode.
@@ -381,6 +381,11 @@ class PlayModeManager:
                 EngineStatus.flash("已停止 Stopped ■", 1.0, duration=1.5)
             else:
                 EngineStatus.flash("停止失败 Stop Failed", 0.0, duration=2.0)
+            if on_complete:
+                try:
+                    on_complete(ok)
+                except Exception as exc:
+                    Debug.log_error(f"exit_play_mode on_complete callback failed: {exc}")
 
         runner.submit("Exit Play Mode", [
             ("恢复场景 Restoring scene...", 0.3, step_restore_scene),

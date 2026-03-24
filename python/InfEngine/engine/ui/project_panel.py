@@ -261,6 +261,14 @@ class ProjectPanel(EditorPanel):
         '.ply':    ("MODEL_GUID",  "MODEL_FILE",  "Model"),
         '.stl':    ("MODEL_GUID",  "MODEL_FILE",  "Model"),
     }
+    _PROJECT_ITEM_MOVE_TYPE = "PROJECT_PANEL_ITEM_PATH"
+    _PROJECT_MOVE_PATH_TYPES = tuple(
+        {payload[0] for payload in _DRAG_DROP_MAP.values()}
+        | {payload[1] for payload in _DRAG_DROP_GUID_MAP.values()}
+        | {_PROJECT_ITEM_MOVE_TYPE}
+    )
+    _PROJECT_MOVE_GUID_TYPES = tuple(payload[0] for payload in _DRAG_DROP_GUID_MAP.values())
+    _PROJECT_MOVE_ACCEPT_TYPES = _PROJECT_MOVE_PATH_TYPES + _PROJECT_MOVE_GUID_TYPES
 
     def __init__(self, root_path: str = "", title: str = "Project", engine=None):
         super().__init__(title, window_id="project")
@@ -404,6 +412,84 @@ class ProjectPanel(EditorPanel):
     def _invalidate_dir_cache(self):
         self.__dir_cache.clear()
         self.__model_sub_cache.clear()
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        return os.path.normcase(os.path.abspath(path))
+
+    @classmethod
+    def _is_path_within(cls, path: str, parent_path: str) -> bool:
+        try:
+            return os.path.commonpath([cls._normalize_path(path), cls._normalize_path(parent_path)]) == cls._normalize_path(parent_path)
+        except ValueError:
+            return False
+
+    def _get_drag_move_sources(self, dragged_path: str) -> list[str]:
+        selected_paths = self._get_selected_paths()
+        if dragged_path in selected_paths:
+            candidates = selected_paths
+        else:
+            candidates = [dragged_path]
+
+        indexed = [(index, path) for index, path in enumerate(candidates) if path and os.path.exists(path)]
+        indexed.sort(key=lambda entry: (entry[1].count(os.sep), len(entry[1]), entry[0]))
+
+        kept: list[str] = []
+        for _index, path in indexed:
+            if any(self._is_path_within(path, existing) for existing in kept):
+                continue
+            kept.append(path)
+        return kept
+
+    def _resolve_project_move_path(self, payload_type: str, payload) -> str | None:
+        if not isinstance(payload, str) or not payload:
+            return None
+
+        if payload_type in self._PROJECT_MOVE_PATH_TYPES:
+            return payload if os.path.exists(payload) else None
+
+        if payload_type in self._PROJECT_MOVE_GUID_TYPES and self.__asset_database:
+            try:
+                path = self.__asset_database.get_path_from_guid(payload)
+            except Exception:
+                return None
+            return path if path and os.path.exists(path) else None
+
+        return None
+
+    def _move_project_items_to_folder(self, target_dir: str, payload_type: str, payload):
+        from InfEngine.debug import Debug
+
+        if not target_dir or not os.path.isdir(target_dir):
+            return
+
+        dragged_path = self._resolve_project_move_path(payload_type, payload)
+        if not dragged_path:
+            return
+
+        sources = [path for path in self._get_drag_move_sources(dragged_path)
+                   if self._normalize_path(path) != self._normalize_path(target_dir)]
+        if not sources:
+            return
+
+        moved_paths = []
+        for source_path in sources:
+            if os.path.isdir(source_path) and self._is_path_within(target_dir, source_path):
+                Debug.log_warning("Cannot move a folder into itself or one of its children")
+                continue
+
+            new_path = file_ops.move_item_to_directory(source_path, target_dir, self.__asset_database)
+            if new_path:
+                moved_paths.append(new_path)
+
+        if not moved_paths:
+            return
+
+        self._invalidate_dir_cache()
+        self.__thumbnail_cache.clear()
+        self.__selected_files = moved_paths
+        self.__selected_file = moved_paths[-1]
+        self._notify_selection_changed()
 
     @staticmethod
     def _get_mtime_ns(path: str):
@@ -749,12 +835,54 @@ class ProjectPanel(EditorPanel):
 
     def _open_scene_file(self, file_path: str):
         """Open a .scene file via the SceneFileManager."""
+        from InfEngine.debug import Debug
+        from InfEngine.engine.deferred_task import DeferredTaskRunner
+        from InfEngine.engine.play_mode import PlayModeManager
         from InfEngine.engine.scene_manager import SceneFileManager
+
+        def _open_after_stop() -> bool:
+            sfm = SceneFileManager.instance()
+            if sfm:
+                return bool(sfm.open_scene(file_path))
+            Debug.log_warning("SceneFileManager not initialized")
+            return False
+
+        play_mode = PlayModeManager.instance()
+        if play_mode and play_mode.is_playing:
+            runner = DeferredTaskRunner.instance()
+            if runner.is_busy:
+                Debug.log_warning("Cannot open scene while another deferred task is running")
+                return
+
+            def _open_when_stopped(ok: bool):
+                if not ok:
+                    Debug.log_warning("Play Mode stop did not complete; scene open cancelled")
+                    return
+
+                native_sm = None
+                try:
+                    from InfEngine.lib import SceneManager as NativeSceneManager
+                    native_sm = NativeSceneManager.instance()
+                except Exception:
+                    native_sm = None
+
+                if play_mode.is_playing:
+                    Debug.log_warning("Scene open cancelled because Play Mode is still active")
+                    return
+                if native_sm and native_sm.is_playing():
+                    Debug.log_warning("Scene open cancelled because native Play Mode is still active")
+                    return
+
+                _open_after_stop()
+
+            if not play_mode.exit_play_mode(on_complete=_open_when_stopped):
+                Debug.log_warning("Failed to stop Play Mode before opening scene")
+            return
+
         sfm = SceneFileManager.instance()
         if sfm:
             sfm.open_scene(file_path)
         else:
-            from InfEngine.debug import Debug
             Debug.log_warning("SceneFileManager not initialized")
 
     def _get_unique_name(self, base_name: str, extension: str = "") -> str:
@@ -833,10 +961,11 @@ class ProjectPanel(EditorPanel):
         for src in sources:
             name = os.path.basename(src)
             dst = os.path.join(self.__current_path, name)
-            if os.path.abspath(src) == os.path.abspath(dst):
-                if self.__clipboard_is_cut:
-                    continue
-            elif os.path.exists(dst):
+            is_same_path = os.path.abspath(src) == os.path.abspath(dst)
+            if is_same_path and self.__clipboard_is_cut:
+                continue
+
+            if is_same_path or os.path.exists(dst):
                 base, ext = os.path.splitext(name)
                 if os.path.isdir(src):
                     ext = ""
@@ -1274,29 +1403,46 @@ class ProjectPanel(EditorPanel):
                                     self._notify_selection_changed()
 
                             # Drag-drop sources (map-driven)
-                            if item_type == 'file':
+                            if item_type == 'dir':
+                                if ctx.begin_drag_drop_source(0):
+                                    ctx.set_drag_drop_payload_str(self._PROJECT_ITEM_MOVE_TYPE, item_path)
+                                    ctx.label(f"Folder: {item_name}")
+                                    ctx.end_drag_drop_source()
+                            elif item_type == 'file':
                                 _dd = self._DRAG_DROP_MAP.get(ext)
+                                _ddg = self._DRAG_DROP_GUID_MAP.get(ext)
                                 if _dd is not None:
                                     if ctx.begin_drag_drop_source(0):
                                         ctx.set_drag_drop_payload_str(_dd[0], item_path)
                                         ctx.label(f"{_dd[1]}: {item_name}")
                                         ctx.end_drag_drop_source()
+                                elif _ddg is not None:
+                                    if ctx.begin_drag_drop_source(0):
+                                        guid = ""
+                                        if self.__asset_database:
+                                            try:
+                                                guid = self.__asset_database.get_guid_from_path(item_path)
+                                            except Exception:
+                                                guid = ""
+                                        if guid:
+                                            ctx.set_drag_drop_payload_str(_ddg[0], guid)
+                                        else:
+                                            ctx.set_drag_drop_payload_str(_ddg[1], item_path)
+                                        ctx.label(f"{_ddg[2]}: {item_name}")
+                                        ctx.end_drag_drop_source()
                                 else:
-                                    _ddg = self._DRAG_DROP_GUID_MAP.get(ext)
-                                    if _ddg is not None:
-                                        if ctx.begin_drag_drop_source(0):
-                                            guid = ""
-                                            if self.__asset_database:
-                                                try:
-                                                    guid = self.__asset_database.get_guid_from_path(item_path)
-                                                except Exception:
-                                                    guid = ""
-                                            if guid:
-                                                ctx.set_drag_drop_payload_str(_ddg[0], guid)
-                                            else:
-                                                ctx.set_drag_drop_payload_str(_ddg[1], item_path)
-                                            ctx.label(f"{_ddg[2]}: {item_name}")
-                                            ctx.end_drag_drop_source()
+                                    if ctx.begin_drag_drop_source(0):
+                                        ctx.set_drag_drop_payload_str(self._PROJECT_ITEM_MOVE_TYPE, item_path)
+                                        ctx.label(f"Item: {item_name}")
+                                        ctx.end_drag_drop_source()
+
+                            if item_type == 'dir':
+                                from .igui import IGUI
+                                IGUI.multi_drop_target(
+                                    ctx,
+                                    self._PROJECT_MOVE_ACCEPT_TYPES,
+                                    lambda payload_type, payload, folder=item_path: self._move_project_items_to_folder(folder, payload_type, payload),
+                                )
 
                             # Name or Rename Input
                             if self.__renaming_path == item_path:

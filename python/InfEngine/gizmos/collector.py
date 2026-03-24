@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Dict, List, TYPE_CHECKING
 
-from InfEngine.gizmos.gizmos import Gizmos
+from InfEngine.gizmos.gizmos import Gizmos, ICON_KIND_DEFAULT
 from InfEngine.components.serialized_field import SerializedFieldDescriptor
 
 if TYPE_CHECKING:
@@ -95,6 +95,7 @@ class GizmosCollector:
         self._icon_cache: Dict[str, list] = {}
         self._cache_built: set = set()   # type_names whose cache entry is filled
         self._last_structure_version: int = -1  # track Scene.structure_version
+        self._last_logged_icon_count: int = -1
 
     # ------------------------------------------------------------------
     # Public API
@@ -110,8 +111,14 @@ class GizmosCollector:
         global _scene_dirty
 
         from InfEngine.lib import SceneManager as _SM
+        # Ensure built-in wrapper classes (Camera, Light, etc.) have run their
+        # BuiltinComponent.__init_subclass__ registration before we snapshot
+        # _builtin_registry. Without this prewarm, icon-only gizmos can appear
+        # to "do nothing" if no earlier code path imported the wrappers yet.
+        import InfEngine.components.builtin  # noqa: F401
         from InfEngine.components.builtin_component import BuiltinComponent
         from InfEngine.components.component import InfComponent
+        from InfEngine.debug import Debug
 
         native = engine.get_native_engine()
         if native is None:
@@ -143,7 +150,13 @@ class GizmosCollector:
             selected_ancestors = self._build_ancestor_set(scene, selected_id)
 
         # Snapshot the builtin registry once per frame
-        builtin_registry = BuiltinComponent._builtin_registry
+        builtin_registry = dict(BuiltinComponent._builtin_registry)
+        try:
+            from InfEngine.components.builtin import Camera as _CameraBuiltin, Light as _LightBuiltin
+            builtin_registry.setdefault("Camera", _CameraBuiltin)
+            builtin_registry.setdefault("Light", _LightBuiltin)
+        except Exception:
+            pass
 
         # Begin frame: clear Gizmos accumulation buffers
         Gizmos._begin_frame()
@@ -245,8 +258,9 @@ class GizmosCollector:
                     transform = go.get_transform()
                     if transform is not None:
                         pos = transform.position
+                        icon_kind = self._resolve_class_value(wrapper_cls, '_gizmo_icon_kind', ICON_KIND_DEFAULT)
                         Gizmos.draw_icon(
-                            (pos.x, pos.y, pos.z), go_id, icon_color)
+                            (pos.x, pos.y, pos.z), go_id, icon_color, icon_kind=icon_kind)
 
                 # ---- Gizmo lifecycle ----
                 if not has_gizmos:
@@ -287,11 +301,17 @@ class GizmosCollector:
         # ---- Pack and upload icon data ----
         icon_packed = Gizmos._get_packed_icon_data()
         if icon_packed is not None:
-            pos_color_buf, id_buf, icon_count = icon_packed
+            pos_color_buf, id_buf, kind_buf, icon_count = icon_packed
             native.upload_component_gizmo_icons(
-                pos_color_buf, id_buf, icon_count)
+                pos_color_buf, id_buf, kind_buf, icon_count)
+            if icon_count != self._last_logged_icon_count:
+                Debug.log_internal(f"[Gizmos] uploaded {icon_count} component icon(s)")
+                self._last_logged_icon_count = icon_count
         else:
             native.clear_component_gizmo_icons()
+            if self._last_logged_icon_count != 0:
+                Debug.log_internal("[Gizmos] uploaded 0 component icons")
+                self._last_logged_icon_count = 0
 
     # ------------------------------------------------------------------
     # Private helpers

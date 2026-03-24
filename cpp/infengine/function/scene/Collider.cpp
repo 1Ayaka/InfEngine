@@ -70,6 +70,9 @@ void Collider::OnEnable()
 
 void Collider::OnDisable()
 {
+    if (IsBeingDestroyed()) {
+        return;
+    }
 
     auto *go = GetGameObject();
     if (go && Data().bodyId != 0xFFFFFFFF) {

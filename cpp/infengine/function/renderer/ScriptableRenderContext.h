@@ -70,7 +70,9 @@ struct EditorGizmosContext
     std::shared_ptr<InfMaterial> gridMaterial;
     std::shared_ptr<InfMaterial> editorToolsMaterial;
     std::shared_ptr<InfMaterial> componentGizmosMaterial;    ///< Material for component gizmos (queue 30000)
-    std::shared_ptr<InfMaterial> componentGizmoIconMaterial; ///< Material for icon billboards (queue 31000)
+    std::shared_ptr<InfMaterial> componentGizmoIconMaterial; ///< Fallback material for icon billboards
+    std::shared_ptr<InfMaterial> cameraGizmoIconMaterial;    ///< Textured camera icon material
+    std::shared_ptr<InfMaterial> lightGizmoIconMaterial;     ///< Textured light icon material
     uint64_t selectedObjectId = 0;
     Scene *activeScene = nullptr;
     glm::vec3 cameraPos{0.0f};

@@ -187,7 +187,7 @@ class InstallerWindow(QWidget):
         root.addWidget(title)
 
         intro = QLabel(
-            "This installer copies InfEngine Hub onto your machine, installs a private Python 3.12 runtime, "
+            "This installer copies InfEngine Hub onto your machine, installs a full private Python 3.12 runtime, "
             "and prepares a reusable venv template for future project creation."
         )
         intro.setWordWrap(True)

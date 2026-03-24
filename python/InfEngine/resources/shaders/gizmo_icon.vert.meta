@@ -1,0 +1,93 @@
+{
+    "meta_version": 2,
+    "metadata": {
+        "content_hash": {
+            "type": "string",
+            "value": "7a5d1452e6bc9c11"
+        },
+        "file_path": {
+            "type": "string",
+            "value": "E:/project/InfEngine/python/InfEngine/resources/shaders/gizmo_icon.vert"
+        },
+        "guid": {
+            "type": "string",
+            "value": "4b9f442a1f1a4ec3b7c3d7618cc4f9b1"
+        },
+        "importer_version": {
+            "type": "int",
+            "value": 1
+        },
+        "last_modified": {
+            "type": "string",
+            "value": "1774233600"
+        },
+        "properties": {
+            "type": "string",
+            "value": "[]"
+        },
+        "resource_type": {
+            "type": "enum infengine::ResourceType",
+            "value": "Shader"
+        },
+        "shader_alpha_test": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_blend": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_cast_shadows": {
+            "type": "bool",
+            "value": true
+        },
+        "shader_cull_mode": {
+            "type": "string",
+            "value": "back"
+        },
+        "shader_depth_test": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_depth_write": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_hidden": {
+            "type": "bool",
+            "value": true
+        },
+        "shader_id": {
+            "type": "string",
+            "value": "gizmo_icon"
+        },
+        "shader_lighting_type": {
+            "type": "string",
+            "value": "unlit"
+        },
+        "shader_pass_tag": {
+            "type": "string",
+            "value": "opaque"
+        },
+        "shader_queue": {
+            "type": "int",
+            "value": 2000
+        },
+        "shader_receive_shadows": {
+            "type": "bool",
+            "value": true
+        },
+        "shader_stencil": {
+            "type": "string",
+            "value": ""
+        },
+        "shader_surface_type": {
+            "type": "string",
+            "value": "opaque"
+        },
+        "type": {
+            "type": "string",
+            "value": "vertex"
+        }
+    }
+}

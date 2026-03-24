@@ -458,6 +458,27 @@ def _create_reference_value_from_payload(element_type, payload, required_compone
     from InfEngine.components.serialized_field import FieldType
 
     if element_type == FieldType.GAME_OBJECT:
+        # String payload = prefab drag (GUID or file path)
+        if isinstance(payload, str):
+            from InfEngine.components.ref_wrappers import PrefabRef
+            import os
+            guid = ""
+            path_hint = ""
+            if os.path.isfile(payload):
+                path_hint = payload
+                guid = _asset_guid_from_path(payload)
+            else:
+                guid = payload
+                try:
+                    from InfEngine.core.assets import AssetManager
+                    adb = getattr(AssetManager, '_asset_database', None)
+                    if adb:
+                        path_hint = adb.get_path_from_guid(guid) or ""
+                except Exception:
+                    pass
+            return PrefabRef(guid=guid, path_hint=path_hint)
+
+        # Int payload = scene hierarchy drag
         from InfEngine.lib import SceneManager as _SM
         from InfEngine.components.ref_wrappers import GameObjectRef
 
@@ -540,6 +561,9 @@ def _get_reference_display_name(element_type, value) -> str:
         return "None"
 
     if element_type == FieldType.GAME_OBJECT:
+        from InfEngine.components.ref_wrappers import PrefabRef
+        if isinstance(value, PrefabRef):
+            return value.name
         obj = value.resolve() if hasattr(value, 'resolve') else value
         return obj.name if obj and hasattr(obj, 'name') else "None"
 
@@ -634,7 +658,7 @@ def _list_drag_drop_type(element_type):
     from InfEngine.components.serialized_field import FieldType
 
     mapping = {
-        FieldType.GAME_OBJECT: "HIERARCHY_GAMEOBJECT",
+        FieldType.GAME_OBJECT: ["HIERARCHY_GAMEOBJECT", "PREFAB_GUID", "PREFAB_FILE"],
         FieldType.MATERIAL: "MATERIAL_FILE",
         FieldType.TEXTURE: "TEXTURE_FILE",
         FieldType.SHADER: "SHADER_FILE",
@@ -1167,14 +1191,20 @@ def render_py_component(ctx: InfGUIContext, py_comp):
 
         # ── Reference types need context-specific callbacks — handle separately ──
         if metadata.field_type == FieldType.GAME_OBJECT:
-            _display_obj = current_value
-            if hasattr(current_value, 'resolve'):
-                _display_obj = current_value.resolve()
-            display = _display_obj.name if _display_obj and hasattr(_display_obj, 'name') else "None"
-            _type_hint = "GameObject"
+            from InfEngine.components.ref_wrappers import PrefabRef
+            if isinstance(current_value, PrefabRef):
+                display = current_value.name
+                _type_hint_prefix = "Prefab"
+            else:
+                _display_obj = current_value
+                if hasattr(current_value, 'resolve'):
+                    _display_obj = current_value.resolve()
+                display = _display_obj.name if _display_obj and hasattr(_display_obj, 'name') else "None"
+                _type_hint_prefix = "GameObject"
+            _type_hint = _type_hint_prefix
             _req_comp = metadata.required_component
             if _req_comp:
-                _type_hint = f"GameObject:{_req_comp}"
+                _type_hint = f"{_type_hint_prefix}:{_req_comp}"
 
             def _go_scene(filt, _rc=_req_comp):
                 return _picker_scene_gameobjects(filt, required_component=_rc)
@@ -1351,34 +1381,32 @@ def _apply_gameobject_drop(comp, field_name: str, payload, required_component: s
 def _apply_gameobject_or_prefab_drop(comp, field_name: str, payload, required_component: str = None):
     """Handle a HIERARCHY_GAMEOBJECT or PREFAB drag-drop onto a GAME_OBJECT field.
 
-    If the payload is a string (file path or GUID from a prefab), the prefab
-    is instantiated first, then the resulting root GO is used as the reference.
+    If the payload is a string (file path or GUID from a prefab), a
+    :class:`PrefabRef` is stored **without** instantiating the prefab into
+    the scene.  The script can later call ``ref.instantiate()`` at runtime.
     """
     if isinstance(payload, str):
-        # Prefab drop — instantiate and use root GO
+        # Prefab drop — store a PrefabRef (no scene instantiation)
         try:
-            from InfEngine.engine.prefab_manager import instantiate_prefab
-            from InfEngine.lib import SceneManager, AssetRegistry
-            scene = SceneManager.instance().get_active_scene()
-            adb = None
-            registry = AssetRegistry.instance()
-            if registry:
-                adb = registry.get_asset_database()
-
-            # Determine if it's a GUID or a file path
+            from InfEngine.components.ref_wrappers import PrefabRef
             import os
+            guid = ""
+            path_hint = ""
             if os.path.isfile(payload):
-                new_obj = instantiate_prefab(file_path=payload, scene=scene, asset_database=adb)
+                path_hint = payload
+                guid = _asset_guid_from_path(payload)
             else:
-                new_obj = instantiate_prefab(guid=payload, scene=scene, asset_database=adb)
+                # payload is a GUID — resolve path from asset database
+                guid = payload
+                try:
+                    from InfEngine.core.assets import AssetManager
+                    adb = getattr(AssetManager, '_asset_database', None)
+                    if adb:
+                        path_hint = adb.get_path_from_guid(guid) or ""
+                except Exception:
+                    pass
 
-            if new_obj is None:
-                from InfEngine.debug import Debug
-                Debug.log_warning("Failed to instantiate prefab for field drop.")
-                return
-
-            from InfEngine.components.ref_wrappers import GameObjectRef
-            ref = GameObjectRef(new_obj)
+            ref = PrefabRef(guid=guid, path_hint=path_hint)
             old_val = getattr(comp, field_name, None)
             _record_property(comp, field_name, old_val, ref, f"Set {field_name}")
         except Exception as e:

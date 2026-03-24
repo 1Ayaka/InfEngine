@@ -1,6 +1,7 @@
 #include "InfEngine.h"
 // Explicit includes for types now only forward-declared in InfRenderer.h
 #include <cmath>
+#include <core/log/InfLog.h>
 #include <core/config/EngineConfig.h>
 #include <function/renderer/EditorTools.h>
 #include <function/renderer/GizmosDrawCallBuffer.h>
@@ -685,7 +686,7 @@ PYBIND11_MODULE(_InfEngine, m)
             "Clear all component gizmo geometry")
         .def(
             "upload_component_gizmo_icons",
-            [](InfEngine &self, py::buffer positions, py::buffer objectIds, int64_t iconCount) {
+            [](InfEngine &self, py::buffer positions, py::buffer objectIds, py::buffer iconKinds, int64_t iconCount) {
                 auto *renderer = self.GetRenderer();
                 if (!renderer)
                     return;
@@ -702,6 +703,9 @@ PYBIND11_MODULE(_InfEngine, m)
                 py::buffer_info idInfo = objectIds.request();
                 const uint32_t *idPtr = static_cast<const uint32_t *>(idInfo.ptr);
 
+                py::buffer_info kindInfo = iconKinds.request();
+                const uint32_t *kindPtr = static_cast<const uint32_t *>(kindInfo.ptr);
+
                 std::vector<GizmosDrawCallBuffer::IconEntry> entries;
                 entries.reserve(static_cast<size_t>(iconCount));
                 for (int64_t i = 0; i < iconCount; ++i) {
@@ -712,14 +716,23 @@ PYBIND11_MODULE(_InfEngine, m)
                     entry.position = glm::vec3(p[0], p[1], p[2]);
                     entry.color = glm::vec3(p[3], p[4], p[5]);
                     entry.objectId = (static_cast<uint64_t>(id[1]) << 32) | static_cast<uint64_t>(id[0]);
+                    entry.iconKind = kindPtr[i];
                     entries.push_back(entry);
+                }
+
+                static int64_t s_lastIconUploadCount = -1;
+                if (s_lastIconUploadCount != iconCount) {
+                    uint32_t firstKind = entries.empty() ? 0u : entries.front().iconKind;
+                    INFLOG_INFO("GizmoIcons: uploaded ", iconCount, " icon entry(ies); firstKind=", firstKind);
+                    s_lastIconUploadCount = iconCount;
                 }
 
                 buf->SetIconData(std::move(entries));
             },
-            py::arg("positions"), py::arg("object_ids"), py::arg("icon_count"),
+            py::arg("positions"), py::arg("object_ids"), py::arg("icon_kinds"), py::arg("icon_count"),
             "Upload component gizmo icon entries via buffer protocol (no numpy). "
-            "positions: flat float32 (N*6: x,y,z,r,g,b), object_ids: flat uint32 (N*2: lo,hi)")
+            "positions: flat float32 (N*6: x,y,z,r,g,b), object_ids: flat uint32 (N*2: lo,hi), "
+            "icon_kinds: flat uint32 (N)")
         .def(
             "clear_component_gizmo_icons",
             [](InfEngine &self) {

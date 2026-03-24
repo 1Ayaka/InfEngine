@@ -278,8 +278,8 @@ def _extract_guid_and_path(value, path_attrs: tuple[str, ...]) -> tuple[str, str
 
 
 def _ensure_game_object_ref(value):
-    from .ref_wrappers import GameObjectRef
-    if isinstance(value, GameObjectRef):
+    from .ref_wrappers import GameObjectRef, PrefabRef
+    if isinstance(value, (GameObjectRef, PrefabRef)):
         return value
     if value is None:
         return GameObjectRef(persistent_id=0)

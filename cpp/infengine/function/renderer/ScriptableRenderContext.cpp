@@ -169,8 +169,21 @@ void ScriptableRenderContext::SubmitCulling(const CullingResults &culling)
 
     // Auto-append component gizmo icons (Python-driven, billboard diamonds)
     if (m_gizmoCtx.componentGizmos && m_gizmoCtx.componentGizmos->HasIconData()) {
-        DrawCallResult iconResult =
-            m_gizmoCtx.componentGizmos->GetIconDrawCalls(m_gizmoCtx.componentGizmoIconMaterial, m_gizmoCtx.cameraPos);
+        glm::vec3 cameraRight(1.0f, 0.0f, 0.0f);
+        glm::vec3 cameraUp(0.0f, 1.0f, 0.0f);
+        if (m_activeCamera && m_activeCamera->GetGameObject() && m_activeCamera->GetGameObject()->GetTransform()) {
+            Transform *cameraTransform = m_activeCamera->GetGameObject()->GetTransform();
+            cameraRight = cameraTransform->GetWorldRight();
+            cameraUp = cameraTransform->GetWorldUp();
+        }
+        DrawCallResult iconResult = m_gizmoCtx.componentGizmos->GetIconDrawCalls(
+            m_gizmoCtx.componentGizmoIconMaterial, m_gizmoCtx.cameraGizmoIconMaterial,
+            m_gizmoCtx.lightGizmoIconMaterial, m_gizmoCtx.cameraPos, cameraRight, cameraUp);
+        static size_t s_lastSubmittedIconDrawCalls = static_cast<size_t>(-1);
+        if (s_lastSubmittedIconDrawCalls != iconResult.drawCalls.size()) {
+            INFLOG_INFO("GizmoIcons: submitting ", iconResult.drawCalls.size(), " editor gizmo icon draw call(s)");
+            s_lastSubmittedIconDrawCalls = iconResult.drawCalls.size();
+        }
         for (auto &dc : iconResult.drawCalls) {
             m_orderedDrawCalls.push_back(dc);
         }

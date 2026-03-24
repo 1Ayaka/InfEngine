@@ -35,7 +35,7 @@ from .serialized_field import (
     get_field_value,
     set_field_value,
 )
-from .ref_wrappers import GameObjectRef, MaterialRef, ComponentRef
+from .ref_wrappers import GameObjectRef, MaterialRef, ComponentRef, PrefabRef
 from .script_loader import (
     load_component_from_file,
     load_all_components_from_file,

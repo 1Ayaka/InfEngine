@@ -18,6 +18,44 @@ using json = nlohmann::json;
 namespace infengine
 {
 
+namespace
+{
+
+std::shared_ptr<InfMaterial> CreateTexturedComponentGizmoIconMaterial(const std::string &name,
+                                                                      const std::string &textureRef)
+{
+    auto material = std::make_shared<InfMaterial>(name);
+    material->SetShader("gizmo_icon");
+
+    RenderState state;
+    state.cullMode = VK_CULL_MODE_NONE;
+    state.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.depthTestEnable = false;
+    state.depthWriteEnable = false;
+    state.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    state.blendEnable = true;
+    state.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    state.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    state.colorBlendOp = VK_BLEND_OP_ADD;
+    state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    state.alphaBlendOp = VK_BLEND_OP_ADD;
+    state.alphaClipEnabled = false;
+    state.alphaClipThreshold = 0.0f;
+    state.renderQueue = 24950;
+    material->SetRenderState(state);
+    material->SyncAlphaClipProperty();
+
+    material->SetColor("baseColor", glm::vec4(1.0f));
+    material->SetTextureGuid("texSampler", textureRef);
+    material->SetBuiltin(true);
+
+    return material;
+}
+
+} // namespace
+
 // ============================================================================
 // RenderState Implementation
 // ============================================================================
@@ -938,26 +976,19 @@ std::shared_ptr<InfMaterial> InfMaterial::CreateComponentGizmosMaterial()
 
 std::shared_ptr<InfMaterial> InfMaterial::CreateComponentGizmoIconMaterial()
 {
-    auto material = std::make_shared<InfMaterial>("ComponentGizmoIconMaterial");
+    return CreateTexturedComponentGizmoIconMaterial("ComponentGizmoIconMaterial", "white");
+}
 
-    // Same gizmo shader: simple unlit with vertex color
-    material->SetShader("gizmo");
+std::shared_ptr<InfMaterial> InfMaterial::CreateComponentGizmoCameraIconMaterial()
+{
+    return CreateTexturedComponentGizmoIconMaterial("ComponentGizmoCameraIconMaterial",
+                                                    "python/InfEngine/resources/icons/gizmo_camera.png");
+}
 
-    // Icon gizmos: TRIANGLE_LIST for filled diamond billboards,
-    // depth-tested (occluded by scene geometry), no depth write, double-sided
-    RenderState state;
-    state.cullMode = VK_CULL_MODE_NONE;
-    state.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    state.depthTestEnable = true;
-    state.depthWriteEnable = false;
-    state.blendEnable = false;
-    state.renderQueue = 11000; // After component gizmo lines (10000), same pass
-    material->SetRenderState(state);
-
-    material->SetBuiltin(true);
-
-    return material;
+std::shared_ptr<InfMaterial> InfMaterial::CreateComponentGizmoLightIconMaterial()
+{
+    return CreateTexturedComponentGizmoIconMaterial("ComponentGizmoLightIconMaterial",
+                                                    "python/InfEngine/resources/icons/gizmo_light.png");
 }
 
 std::shared_ptr<InfMaterial> InfMaterial::CreateSkyboxProceduralMaterial()

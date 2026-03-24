@@ -333,6 +333,35 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
     m_drawSceneFilteredEligible += static_cast<uint64_t>(m_eligibleScratch.size());
 #endif
 
+    // One-shot diagnostic: log icon draw calls that pass filtering
+    {
+        static int s_iconDiagCount = 0;
+        if (s_iconDiagCount < 5) {
+            for (const auto &entry : m_eligibleScratch) {
+                const std::string &matName = entry.material->GetName();
+                if (matName.find("GizmoIcon") != std::string::npos || matName.find("Gizmo") != std::string::npos) {
+                    const DrawCall &dc = *entry.dc;
+                    auto bufIt = m_perObjectBuffers.find(dc.objectId);
+                    bool hasBuf = (bufIt != m_perObjectBuffers.end() && bufIt->second.vertexBuffer && bufIt->second.indexBuffer);
+                    VkPipeline pip = entry.material->GetPassPipeline(ShaderCompileTarget::Forward);
+                    VkDescriptorSet ds = entry.material->GetPassDescriptorSet(ShaderCompileTarget::Forward);
+                    INFLOG_INFO("[IconDiag] eligible: mat='", matName,
+                                "' queue=", entry.material->GetRenderQueue(),
+                                " objId=", dc.objectId,
+                                " idxCount=", dc.indexCount,
+                                " hasBuf=", hasBuf,
+                                " pipeline=", (pip != VK_NULL_HANDLE ? "OK" : "NULL"),
+                                " descSet=", (ds != VK_NULL_HANDLE ? "OK" : "NULL"),
+                                " blend=", entry.material->GetRenderState().blendEnable,
+                                " qRange=[", queueMin, "-", queueMax, "]",
+                                " vert='", entry.material->GetVertShaderName(),
+                                "' frag='", entry.material->GetFragShaderName(), "'");
+                    ++s_iconDiagCount;
+                }
+            }
+        }
+    }
+
     if (m_eligibleScratch.empty()) {
 #if INFENGINE_FRAME_PROFILE
         m_drawSubMs[8] += std::chrono::duration<double, std::milli>(Clock::now() - totalStart).count();
@@ -516,6 +545,19 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
             }
             vkCmdDrawIndexed(cmdBuf, dc.indexCount, 1, dc.indexStart, dc.vertexStart, 0);
             ++issuedDraws;
+
+            // One-shot diagnostic: log when an icon draw call is actually issued
+            {
+                static int s_iconDrawDiag = 0;
+                if (s_iconDrawDiag < 10 && matRaw->GetName().find("Gizmo") != std::string::npos) {
+                    INFLOG_INFO("[IconDiag] DRAW ISSUED: mat='", matRaw->GetName(),
+                                "' objId=", dc.objectId,
+                                " idxCount=", dc.indexCount,
+                                " vbuf=", (void*)bufIt->second.vertexBuffer->GetBuffer(),
+                                " ibuf=", (void*)bufIt->second.indexBuffer->GetBuffer());
+                    ++s_iconDrawDiag;
+                }
+            }
         } else {
             static int bufWarnCount = 0;
             if (bufWarnCount++ < 10) {

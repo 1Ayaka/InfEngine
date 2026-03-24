@@ -219,6 +219,11 @@ class Component
         return m_hasDestroyed;
     }
 
+    [[nodiscard]] bool IsBeingDestroyed() const
+    {
+        return m_isBeingDestroyed;
+    }
+
     /// @brief Enable or disable the component (triggers OnEnable/OnDisable)
     void SetEnabled(bool enabled);
 
@@ -323,6 +328,7 @@ class Component
     bool m_hasAwake = false;
     bool m_hasStarted = false;
     bool m_hasDestroyed = false;
+    bool m_isBeingDestroyed = false;
     int m_executionOrder = 0;
     uint64_t m_componentId = 0;
     std::string m_instanceGuid; ///< Runtime instance GUID for dependency graph and prefab identity

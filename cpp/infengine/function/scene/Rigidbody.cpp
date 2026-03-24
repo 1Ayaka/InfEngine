@@ -729,16 +729,52 @@ void Rigidbody::SyncExternalMovesToPhysics()
     glm::vec3 currentPos = tf->GetPosition();
     glm::quat currentRot = tf->GetWorldRotation();
 
-    // First frame: initialise cache from current Transform
+    const float posEps = 1e-4f;
+    const float rotEps = 1e-4f;
+
+    // First frame: initialise cache from current Transform.
+    // Also check whether the script already moved the Transform away from
+    // the body position (e.g. instantiate then set position).  If so,
+    // teleport the body immediately instead of waiting one more tick.
     if (!d.hasSyncedOnce) {
         d.lastSyncedPosition = currentPos;
         d.lastSyncedRotation = currentRot;
         d.hasSyncedOnce = true;
+
+        auto &pw = PhysicsWorld::Instance();
+        if (!pw.IsInitialized())
+            return;
+
+        auto bodyIds = CollectUniqueBodyIds(go);
+        if (bodyIds.empty())
+            return;
+
+        glm::vec3 bodyPos = pw.GetBodyPosition(bodyIds[0]);
+        bool firstFrameDiff = glm::length(currentPos - bodyPos) > posEps;
+        if (!firstFrameDiff)
+            return;
+
+        // Transform was modified after body creation — teleport now.
+        auto colliders = go->GetComponents<Collider>();
+        for (auto *col : colliders) {
+            if (col && col->GetBodyId() != 0xFFFFFFFF) {
+                col->SetLastSyncedTransform(currentPos, currentRot);
+            }
+        }
+        for (uint32_t bodyId : bodyIds) {
+            pw.SetBodyPosition(bodyId, currentPos, currentRot);
+            pw.ActivateBody(bodyId);
+            pw.SetBodyLinearVelocity(bodyId, glm::vec3(0.0f));
+            pw.SetBodyAngularVelocity(bodyId, glm::vec3(0.0f));
+        }
+        d.previousPhysicsPosition = currentPos;
+        d.previousPhysicsRotation = currentRot;
+        d.currentPhysicsPosition  = currentPos;
+        d.currentPhysicsRotation  = currentRot;
+        d.hasPhysicsPose = true;
         return;
     }
 
-    const float posEps = 1e-4f;
-    const float rotEps = 1e-4f;
     bool posDiff = glm::length(currentPos - d.lastSyncedPosition) > posEps;
     bool rotDiff = (1.0f - std::abs(glm::dot(currentRot, d.lastSyncedRotation))) > rotEps;
 

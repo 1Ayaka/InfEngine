@@ -26,6 +26,7 @@ from typing import Any, Optional, Tuple
 
 from InfEngine.components.builtin_component import BuiltinComponent, CppProperty
 from InfEngine.components.serialized_field import FieldType
+from InfEngine.gizmos.gizmos import ICON_KIND_CAMERA
 
 
 def _vec4_to_list(v):
@@ -63,6 +64,7 @@ class Camera(BuiltinComponent):
 
     # Scene icon: white diamond shown at camera position (Unity-style)
     _gizmo_icon_color = (1.0, 1.0, 1.0)
+    _gizmo_icon_kind = ICON_KIND_CAMERA
 
     # ---- Projection ----
     projection_mode = CppProperty(

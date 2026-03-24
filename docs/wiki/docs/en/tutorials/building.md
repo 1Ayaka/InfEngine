@@ -174,10 +174,40 @@ The Hub is a standalone launcher (built with PySide6 + PyInstaller) for managing
 The Hub ships as a one-click installer (`InfEngineHubInstaller.exe`) that:
 
 1. Extracts the Hub application to your chosen directory
-2. Downloads and installs Python 3.12 embeddable runtime
+2. Installs the Python 3.12 embeddable runtime (without downloading when offline assets are prebundled)
 3. Creates a reusable venv template with pip
 4. Registers in Windows Add/Remove Programs
 5. Creates a Start Menu shortcut
+
+### Prebundle the Python runtime for offline installs
+
+If your users have slow access to python.org or PyPI, place offline runtime assets in `packaging/runtime/` before building. Both `InfEngineHubInstaller.exe` and the standalone Hub will prefer these local files over network downloads.
+
+Recommended files:
+
+- `python-3.12.8-embed-amd64.zip`
+- `get-pip.py`
+- `virtualenv` and dependency wheels under `wheels/`
+
+Example layout:
+
+```text
+packaging/runtime/
+    python-3.12.8-embed-amd64.zip
+    get-pip.py
+    wheels/
+        virtualenv-*.whl
+        distlib-*.whl
+        filelock-*.whl
+        platformdirs-*.whl
+```
+
+The runtime bootstrap then works in this order:
+
+1. Use the bundled Python embeddable zip
+2. Use the bundled `get-pip.py`
+3. Prefer offline `wheels/` for `virtualenv`
+4. Fall back to network downloads only when local assets are missing
 
 ### Building the Hub (for developers)
 

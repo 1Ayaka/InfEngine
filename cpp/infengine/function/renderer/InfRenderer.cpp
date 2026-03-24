@@ -203,8 +203,9 @@ void InfRenderer::PreparePipeline()
 
         // Hook RenderGraph execution into the pre-render callback
         m_vkCore->SetRenderGraphExecutor([this](VkCommandBuffer cmdBuf) {
-            const bool sceneViewActive = (m_sceneViewVisible && m_sceneRenderTarget &&
-                                          m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
+            const bool sceneViewActive =
+                (m_sceneViewVisible && m_sceneRenderTarget && m_sceneRenderTarget->IsReady() &&
+                 m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
 
 #if INFENGINE_FRAME_PROFILE
             using ExClock = std::chrono::high_resolution_clock;
@@ -265,22 +266,6 @@ void InfRenderer::PreparePipeline()
                     auto exTg1 = ExClock::now();
 #endif
                     m_gameRenderGraph->ResolveSceneMsaa(cmdBuf);
-
-                    if (m_gameRenderTarget->IsMsaaEnabled()) {
-                        VkImageMemoryBarrier gameBarrier{};
-                        gameBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                        gameBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                        gameBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                        gameBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        gameBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        gameBarrier.image = m_gameRenderTarget->GetColorImage();
-                        gameBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                        gameBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                        gameBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                        vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                                             &gameBarrier);
-                    }
 #if INFENGINE_FRAME_PROFILE
                     auto exTg2 = ExClock::now();
 #endif
@@ -465,10 +450,11 @@ void InfRenderer::DrawFrame()
     }
 
     // Render scene via Python SRP render pipeline
-    if (m_renderPipeline) {
-        const bool sceneViewActive =
-            (m_sceneRenderTarget && m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
+    const bool sceneViewActive =
+        (m_sceneViewVisible && m_sceneRenderTarget && m_sceneRenderTarget->IsReady() &&
+         m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
 
+    if (m_renderPipeline) {
         EditorGizmosContext gizmoCtx;
         if (m_editorGizmos) {
             gizmoCtx.gizmos = m_editorGizmos.get();
@@ -480,6 +466,8 @@ void InfRenderer::DrawFrame()
             gizmoCtx.editorToolsMaterial = registry.GetBuiltinMaterial("EditorToolsMaterial");
             gizmoCtx.componentGizmosMaterial = registry.GetBuiltinMaterial("ComponentGizmosMaterial");
             gizmoCtx.componentGizmoIconMaterial = registry.GetBuiltinMaterial("ComponentGizmoIconMaterial");
+            gizmoCtx.cameraGizmoIconMaterial = registry.GetBuiltinMaterial("ComponentGizmoCameraIconMaterial");
+            gizmoCtx.lightGizmoIconMaterial = registry.GetBuiltinMaterial("ComponentGizmoLightIconMaterial");
             gizmoCtx.selectedObjectId = m_selectedObjectId;
             gizmoCtx.activeScene = SceneManager::Instance().GetActiveScene();
             gizmoCtx.cameraPos = glm::vec3(m_cameraPos[0], m_cameraPos[1], m_cameraPos[2]);
@@ -559,12 +547,14 @@ void InfRenderer::DrawFrame()
 #endif
 
     // Lazy-init and update outline renderer
-    if (m_outlineRenderer && m_sceneRenderTarget && m_vkCore) {
+    if (sceneViewActive && m_outlineRenderer && m_sceneRenderTarget && m_vkCore) {
         m_outlineRenderer->Initialize(m_vkCore.get(), m_sceneRenderTarget.get());
         m_outlineRenderer->SetOutlineObjectId(m_selectedObjectId);
+    } else if (m_outlineRenderer) {
+        m_outlineRenderer->SetOutlineObjectId(0);
     }
 
-    if (m_sceneViewVisible && m_sceneRenderGraph) {
+    if (sceneViewActive && m_sceneRenderGraph) {
         m_sceneRenderGraph->EnsureGraphBuilt();
     }
     if (m_gameCameraEnabled && m_gameRenderGraph) {

@@ -1,6 +1,8 @@
 #include "GizmosDrawCallBuffer.h"
 
 #include <algorithm>
+#include <core/log/InfLog.h>
+#include <function/resources/InfMaterial/InfMaterial.h>
 #include <cstring>
 #include <glm/glm.hpp>
 #include <unordered_set>
@@ -167,12 +169,28 @@ bool GizmosDrawCallBuffer::HasIconData() const
     return !m_iconEntries.empty();
 }
 
-DrawCallResult GizmosDrawCallBuffer::GetIconDrawCalls(std::shared_ptr<InfMaterial> iconMaterial,
-                                                      const glm::vec3 &cameraPos) const
+DrawCallResult GizmosDrawCallBuffer::GetIconDrawCalls(std::shared_ptr<InfMaterial> defaultIconMaterial,
+                                                      std::shared_ptr<InfMaterial> cameraIconMaterial,
+                                                      std::shared_ptr<InfMaterial> lightIconMaterial,
+                                                      const glm::vec3 &cameraPos, const glm::vec3 &cameraRight,
+                                                      const glm::vec3 &cameraUp) const
 {
     DrawCallResult result;
-    if (m_iconEntries.empty() || !iconMaterial)
+    if (m_iconEntries.empty())
         return result;
+
+    glm::vec3 billboardRight = cameraRight;
+    glm::vec3 billboardUp = cameraUp;
+    if (glm::dot(billboardRight, billboardRight) < 1e-6f) {
+        billboardRight = glm::vec3(1.0f, 0.0f, 0.0f);
+    } else {
+        billboardRight = glm::normalize(billboardRight);
+    }
+    if (glm::dot(billboardUp, billboardUp) < 1e-6f) {
+        billboardUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    } else {
+        billboardUp = glm::normalize(billboardUp);
+    }
 
     // Rebuild billboard geometry if entries changed
     if (m_iconSlicesDirty) {
@@ -184,6 +202,10 @@ DrawCallResult GizmosDrawCallBuffer::GetIconDrawCalls(std::shared_ptr<InfMateria
     }
 
     result.drawCalls.reserve(m_iconEntries.size());
+    std::vector<float> iconDistances;
+    iconDistances.reserve(m_iconEntries.size());
+    std::vector<std::string> iconMaterialNames;
+    iconMaterialNames.reserve(m_iconEntries.size());
 
     for (size_t i = 0; i < m_iconEntries.size(); ++i) {
         const auto &icon = m_iconEntries[i];
@@ -191,55 +213,54 @@ DrawCallResult GizmosDrawCallBuffer::GetIconDrawCalls(std::shared_ptr<InfMateria
         // Compute billboard orientation
         glm::vec3 toCamera = cameraPos - icon.position;
         float distance = glm::length(toCamera);
-        if (distance < 0.001f)
-            continue; // skip icons at camera position
-
-        toCamera /= distance; // normalize
-
-        // Build camera-facing basis
-        glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
-        // Handle degenerate case when looking straight up/down
-        if (std::abs(glm::dot(toCamera, worldUp)) > 0.99f) {
-            worldUp = glm::vec3(0.0f, 0.0f, 1.0f);
+        if (distance < 0.001f) {
+            // When the editor camera sits on top of an icon (common for scene
+            // cameras), keep the icon drawable instead of silently dropping it.
+            toCamera = glm::vec3(0.0f, 0.0f, 1.0f);
+            distance = 0.0f;
+        } else {
+            toCamera /= distance; // normalize
         }
-        glm::vec3 right = glm::normalize(glm::cross(worldUp, toCamera));
-        glm::vec3 up = glm::cross(toCamera, right);
+        iconDistances.push_back(distance);
 
         // Constant angular size
-        float worldSize = distance * ICON_SIZE_FACTOR;
+        float worldSize = std::max(distance * ICON_SIZE_FACTOR, ICON_MIN_WORLD_SIZE);
 
-        // Diamond quad: 4 outer vertices + center
-        //       top
-        //      / | \
-        //   left-+-right
-        //      \ | /
-        //      bottom
-        glm::vec3 top = icon.position + up * worldSize;
-        glm::vec3 bottom = icon.position - up * worldSize;
-        glm::vec3 leftPt = icon.position - right * worldSize;
-        glm::vec3 rightPt = icon.position + right * worldSize;
+        glm::vec3 topLeft = icon.position + billboardUp * worldSize - billboardRight * worldSize;
+        glm::vec3 topRight = icon.position + billboardUp * worldSize + billboardRight * worldSize;
+        glm::vec3 bottomRight = icon.position - billboardUp * worldSize + billboardRight * worldSize;
+        glm::vec3 bottomLeft = icon.position - billboardUp * worldSize - billboardRight * worldSize;
 
-        auto makeVertex = [&](const glm::vec3 &pos) -> Vertex {
+        auto makeVertex = [&](const glm::vec3 &pos, const glm::vec2 &uv) -> Vertex {
             Vertex v;
             v.pos = pos;
-            v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
-            v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+            v.normal = toCamera;
+            v.tangent = glm::vec4(billboardRight, 1.0f);
             v.color = icon.color;
-            v.texCoord = glm::vec2(0.0f);
+            v.texCoord = uv;
             return v;
         };
 
-        // 4 vertices: top(0), right(1), bottom(2), left(3)
         auto &verts = m_iconSlicedVertices[i];
         verts.clear();
-        verts.push_back(makeVertex(top));
-        verts.push_back(makeVertex(rightPt));
-        verts.push_back(makeVertex(bottom));
-        verts.push_back(makeVertex(leftPt));
+        verts.push_back(makeVertex(topLeft, glm::vec2(0.0f, 0.0f)));
+        verts.push_back(makeVertex(topRight, glm::vec2(1.0f, 0.0f)));
+        verts.push_back(makeVertex(bottomRight, glm::vec2(1.0f, 1.0f)));
+        verts.push_back(makeVertex(bottomLeft, glm::vec2(0.0f, 1.0f)));
 
-        // 2 triangles forming the diamond
         auto &indices = m_iconSlicedIndices[i];
         indices = {0, 1, 2, 0, 2, 3};
+
+        std::shared_ptr<InfMaterial> iconMaterial = defaultIconMaterial;
+        if (icon.iconKind == ICON_KIND_CAMERA && cameraIconMaterial) {
+            iconMaterial = cameraIconMaterial;
+        } else if (icon.iconKind == ICON_KIND_LIGHT && lightIconMaterial) {
+            iconMaterial = lightIconMaterial;
+        }
+        iconMaterialNames.push_back(iconMaterial ? iconMaterial->GetName() : std::string("<null>"));
+        if (!iconMaterial) {
+            continue;
+        }
 
         DrawCall dc;
         dc.indexStart = 0;
@@ -252,6 +273,29 @@ DrawCallResult GizmosDrawCallBuffer::GetIconDrawCalls(std::shared_ptr<InfMateria
         dc.forceBufferUpdate = true;
 
         result.drawCalls.push_back(dc);
+    }
+
+    static size_t s_lastIconEntryCount = static_cast<size_t>(-1);
+    static size_t s_lastBuiltIconDrawCallCount = static_cast<size_t>(-1);
+    if (s_lastIconEntryCount != m_iconEntries.size() || s_lastBuiltIconDrawCallCount != result.drawCalls.size()) {
+        INFLOG_INFO("GizmoIcons: built ", result.drawCalls.size(), " draw call(s) from ", m_iconEntries.size(),
+                    " icon entr", (m_iconEntries.size() == 1 ? "y" : "ies"), " cameraPos=", cameraPos.x, ",",
+                    cameraPos.y, ",", cameraPos.z);
+        for (size_t i = 0; i < m_iconEntries.size(); ++i) {
+            const auto &icon = m_iconEntries[i];
+            const char *kindName = "default";
+            if (icon.iconKind == ICON_KIND_CAMERA) {
+                kindName = "camera";
+            } else if (icon.iconKind == ICON_KIND_LIGHT) {
+                kindName = "light";
+            }
+            INFLOG_INFO("GizmoIcons: entry[", i, "] kind=", kindName, " objectId=", icon.objectId, " pos=",
+                        icon.position.x, ",", icon.position.y, ",", icon.position.z, " distance=",
+                        (i < iconDistances.size() ? iconDistances[i] : -1.0f), " material=",
+                        (i < iconMaterialNames.size() ? iconMaterialNames[i] : std::string("<missing>")));
+        }
+        s_lastIconEntryCount = m_iconEntries.size();
+        s_lastBuiltIconDrawCallCount = result.drawCalls.size();
     }
 
     return result;

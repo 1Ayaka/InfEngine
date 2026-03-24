@@ -44,7 +44,8 @@ Component::~Component()
 
 Component::Component(Component &&other) noexcept
     : m_gameObject(other.m_gameObject), m_enabled(other.m_enabled), m_wasEnabled(other.m_wasEnabled),
-      m_hasAwake(other.m_hasAwake), m_hasStarted(other.m_hasStarted), m_hasDestroyed(other.m_hasDestroyed),
+    m_hasAwake(other.m_hasAwake), m_hasStarted(other.m_hasStarted), m_hasDestroyed(other.m_hasDestroyed),
+    m_isBeingDestroyed(other.m_isBeingDestroyed),
       m_executionOrder(other.m_executionOrder), m_componentId(other.m_componentId),
       m_instanceGuid(std::move(other.m_instanceGuid))
 {
@@ -64,6 +65,7 @@ Component &Component::operator=(Component &&other) noexcept
         m_hasAwake = other.m_hasAwake;
         m_hasStarted = other.m_hasStarted;
         m_hasDestroyed = other.m_hasDestroyed;
+        m_isBeingDestroyed = other.m_isBeingDestroyed;
         m_executionOrder = other.m_executionOrder;
         m_componentId = other.m_componentId;
         m_instanceGuid = std::move(other.m_instanceGuid);
@@ -119,6 +121,8 @@ void Component::CallOnDestroy()
     if (m_hasDestroyed) {
         return;
     }
+
+    m_isBeingDestroyed = true;
 
     if (m_wasEnabled) {
         CallOnDisable();

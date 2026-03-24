@@ -6,6 +6,7 @@ depend on ``ProjectPanel`` internals.
 """
 
 import os
+import shutil
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,90 @@ def get_unique_name(current_path: str, base_name: str, extension: str = "") -> s
         if counter > 999:
             break
     return f"{base_name}{counter}"
+
+
+def _normalize_path(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _is_path_within(path: str, parent_path: str) -> bool:
+    try:
+        return os.path.commonpath([_normalize_path(path), _normalize_path(parent_path)]) == _normalize_path(parent_path)
+    except ValueError:
+        return False
+
+
+def _iter_asset_move_pairs(old_path: str, new_path: str):
+    if os.path.isdir(old_path):
+        for dirpath, _dirnames, filenames in os.walk(old_path):
+            rel_dir = os.path.relpath(dirpath, old_path)
+            mapped_dir = new_path if rel_dir == "." else os.path.join(new_path, rel_dir)
+            for filename in filenames:
+                yield os.path.join(dirpath, filename), os.path.join(mapped_dir, filename)
+    elif os.path.isfile(old_path):
+        yield old_path, new_path
+
+
+def _notify_asset_moved(old_path: str, new_path: str, asset_database=None):
+    from InfEngine.core.assets import AssetManager
+    from . import asset_inspector
+
+    if asset_database:
+        try:
+            asset_database.on_asset_moved(old_path, new_path)
+        except Exception:
+            pass
+
+    try:
+        AssetManager.on_asset_moved(old_path, new_path)
+    except Exception:
+        pass
+
+    asset_inspector.invalidate_asset(old_path)
+    asset_inspector.invalidate_asset(new_path)
+
+
+def move_path(old_path: str, new_path: str, asset_database=None):
+    """Move or rename a file/directory to *new_path* and notify asset systems."""
+    if not old_path or not new_path or not os.path.exists(old_path):
+        return None
+
+    old_abs = os.path.abspath(old_path)
+    new_abs = os.path.abspath(new_path)
+    if _normalize_path(old_abs) == _normalize_path(new_abs):
+        return new_abs
+
+    if os.path.isdir(old_abs) and _is_path_within(new_abs, old_abs):
+        return None
+
+    move_pairs = list(_iter_asset_move_pairs(old_abs, new_abs))
+    shutil.move(old_abs, new_abs)
+
+    for old_file, new_file in move_pairs:
+        _notify_asset_moved(old_file, new_file, asset_database)
+
+    return new_abs
+
+
+def move_item_to_directory(item_path: str, dest_dir: str, asset_database=None):
+    """Move *item_path* into *dest_dir*, generating a unique name on conflicts."""
+    if not item_path or not dest_dir or not os.path.exists(item_path) or not os.path.isdir(dest_dir):
+        return None
+
+    item_abs = os.path.abspath(item_path)
+    dest_abs = os.path.abspath(dest_dir)
+
+    name = os.path.basename(item_abs)
+    new_path = os.path.join(dest_abs, name)
+    if os.path.exists(new_path) and _normalize_path(new_path) != _normalize_path(item_abs):
+        base, ext = os.path.splitext(name)
+        if os.path.isdir(item_abs):
+            base = name
+            ext = ""
+        unique_name = get_unique_name(dest_abs, base, ext)
+        new_path = os.path.join(dest_abs, unique_name + ext)
+
+    return move_path(item_abs, new_path, asset_database)
 
 
 # ---------------------------------------------------------------------------
@@ -340,9 +425,4 @@ def do_rename(old_path: str, new_name: str, asset_database=None):
     if ext.lower() == '.mat' and os.path.isfile(old_path):
         update_material_name_in_file(old_path, os.path.splitext(safe_name)[0])
 
-    os.rename(old_path, new_path)
-
-    if asset_database and os.path.isfile(new_path):
-        asset_database.on_asset_moved(old_path, new_path)
-
-    return new_path
+    return move_path(old_path, new_path, asset_database)

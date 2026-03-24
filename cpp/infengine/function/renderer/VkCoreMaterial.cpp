@@ -15,12 +15,14 @@
 #include <function/renderer/shader/ShaderProgram.h>
 #include <function/resources/AssetDatabase/AssetDatabase.h>
 #include <function/resources/AssetRegistry/AssetRegistry.h>
+#include <function/resources/InfFileLoader/InfShaderLoader.hpp>
 #include <function/resources/InfMaterial/InfMaterial.h>
 #include <function/resources/InfResource/InfResourceMeta.h>
 #include <function/resources/InfTexture/InfTexture.h>
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <glm/glm.hpp>
 
 #include <cstring>
@@ -44,6 +46,26 @@ static bool IsLinearMaterialTextureBinding(const std::string &bindingName)
            lower.find("mask") != std::string::npos || lower.find("height") != std::string::npos;
 }
 
+static std::string ResolveTexturePathFromShaderRoots(const std::string &textureRef)
+{
+    namespace fs = std::filesystem;
+
+    fs::path relative(textureRef);
+    std::error_code ec;
+    for (const auto &searchPathStr : InfShaderLoader::GetShaderSearchPaths()) {
+        fs::path current = fs::path(searchPathStr);
+        for (int depth = 0; depth < 8 && !current.empty(); ++depth) {
+            fs::path candidate = current / relative;
+            if (fs::exists(candidate, ec) && !ec) {
+                return fs::weakly_canonical(candidate, ec).string();
+            }
+            current = current.parent_path();
+        }
+    }
+
+    return "";
+}
+
 // ============================================================================
 // Shared texture resolution for material Texture2D properties
 // ============================================================================
@@ -64,10 +86,17 @@ std::pair<VkImageView, VkSampler> InfVkCoreModular::ResolveTextureForMaterial(co
     }
 
     if (texturePath.empty()) {
-        // Could not resolve to a file path — GUID mapping is stale or asset deleted
-        INFLOG_WARN("TextureResolver: cannot resolve texture reference '", textureRef, "' to a file path (binding='",
-                    bindingName, "')");
-        return {VK_NULL_HANDLE, VK_NULL_HANDLE};
+        std::filesystem::path directPath(textureRef);
+        if (std::filesystem::exists(directPath)) {
+            texturePath = directPath.string();
+        } else {
+            texturePath = ResolveTexturePathFromShaderRoots(textureRef);
+            if (texturePath.empty()) {
+                INFLOG_WARN("TextureResolver: cannot resolve texture reference '", textureRef,
+                            "' to a file path (binding='", bindingName, "')");
+                return {VK_NULL_HANDLE, VK_NULL_HANDLE};
+            }
+        }
     }
 
     // ── Load InfTexture via AssetRegistry (caches import settings) ──────────

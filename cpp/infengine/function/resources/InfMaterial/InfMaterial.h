@@ -501,6 +501,12 @@ class InfMaterial
     /// @brief Create the component gizmo icon material (TRIANGLE_LIST billboards, queue 31000)
     static std::shared_ptr<InfMaterial> CreateComponentGizmoIconMaterial();
 
+    /// @brief Create the built-in textured camera icon billboard material.
+    static std::shared_ptr<InfMaterial> CreateComponentGizmoCameraIconMaterial();
+
+    /// @brief Create the built-in textured light icon billboard material.
+    static std::shared_ptr<InfMaterial> CreateComponentGizmoLightIconMaterial();
+
     /// @brief Create a procedural skybox material (gradient sky + sun)
     static std::shared_ptr<InfMaterial> CreateSkyboxProceduralMaterial();
 
