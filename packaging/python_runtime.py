@@ -64,6 +64,13 @@ def _is_embeddable_python_root(python_root: str) -> bool:
         return False
 
 
+def _quote_burn(value: str) -> str:
+    """Quote a value for the Burn bootstrapper command line."""
+    if " " in value or '"' in value:
+        return f'"{value}"'
+    return value
+
+
 class PythonRuntimeError(RuntimeError):
     pass
 
@@ -244,11 +251,86 @@ class PythonRuntimeManager:
         shutil.rmtree(target_dir, ignore_errors=True)
         os.makedirs(target_dir, exist_ok=True)
 
-        args = [
-            installer_path,
-            "/quiet",
+        log_path = os.path.join(self.installed_runtime_dir(), "python_install.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+        # Try /quiet first; fall back to /passive (shows progress bar) if it fails.
+        for ui_flag in ("/quiet", "/passive"):
+            cmdline = self._build_installer_cmdline(
+                installer_path, ui_flag, log_path, target_dir,
+            )
+            try:
+                completed = self._run_command(
+                    cmdline,
+                    timeout=1800,
+                    raise_on_error=False,
+                )
+                # Exit code 3010 = success, reboot required.
+                if completed.returncode in (0, 3010):
+                    break
+                if ui_flag == "/passive":
+                    self._raise_install_error(completed, log_path)
+            except PythonRuntimeError:
+                if ui_flag == "/passive":
+                    raise
+
+        # The installer may place python.exe in a subdirectory.
+        if not os.path.isfile(python_exe):
+            found = self._find_python_in_root(target_dir)
+            if found:
+                python_exe = found
+
+        if not os.path.isfile(python_exe):
+            log_hint = ""
+            if os.path.isfile(log_path):
+                log_hint = f"\nInstaller log: {log_path}"
+            raise PythonRuntimeError(
+                "Python 3.12 executable was not found after installation:\n"
+                f"{python_exe}{log_hint}"
+            )
+
+    def _find_python_in_root(self, root: str) -> Optional[str]:
+        """Walk *root* looking for a valid Python 3.12 executable."""
+        for dirpath, _dirs, files in os.walk(root):
+            for fname in files:
+                if fname.lower() == "python.exe":
+                    candidate = os.path.join(dirpath, fname)
+                    if self._is_valid_python312(candidate):
+                        return candidate
+        return None
+
+    def _raise_install_error(
+        self, completed: subprocess.CompletedProcess, log_path: str
+    ) -> None:
+        details = self._summarize_output(completed.stderr or completed.stdout)
+        log_hint = ""
+        if os.path.isfile(log_path):
+            log_hint = f"\nInstaller log: {log_path}"
+        raise PythonRuntimeError(
+            f"Python installer exited with code {completed.returncode}.{log_hint}\n{details}"
+        )
+
+    @staticmethod
+    def _build_installer_cmdline(
+        installer_path: str,
+        ui_flag: str,
+        log_path: str,
+        target_dir: str,
+    ) -> str:
+        """Build command line for the Python Burn bootstrapper.
+
+        The Burn engine has its own command-line parser that differs from
+        the standard C runtime rules used by ``subprocess.list2cmdline``.
+        In particular, ``TargetDir=`` needs the *value* quoted, not the
+        whole ``property=value`` token.  We construct the command as a raw
+        string so it is passed directly to ``CreateProcess``.
+        """
+        parts = [
+            _quote_burn(installer_path),
+            ui_flag,
+            f"/log {_quote_burn(log_path)}",
             "InstallAllUsers=0",
-            f'TargetDir={target_dir}',
+            f"TargetDir={_quote_burn(target_dir)}",
             "AssociateFiles=0",
             "CompileAll=0",
             "Include_debug=0",
@@ -262,15 +344,8 @@ class PythonRuntimeManager:
             "LauncherOnly=0",
             "PrependPath=0",
             "Shortcuts=0",
-            "SimpleInstall=1",
         ]
-        self._run_command(args, timeout=1800)
-
-        if not os.path.isfile(python_exe):
-            raise PythonRuntimeError(
-                "Python 3.12 executable was not found after installation:\n"
-                f"{python_exe}"
-            )
+        return " ".join(parts)
 
     def create_venv(self, venv_path: str) -> str:
         python_exe = self.ensure_runtime()
@@ -449,7 +524,7 @@ class PythonRuntimeManager:
 
     def _run_command(
         self,
-        args: list[str],
+        args,
         *,
         timeout: int,
         raise_on_error: bool = True,
@@ -463,28 +538,30 @@ class PythonRuntimeManager:
         if sys.platform == "win32":
             kwargs["creationflags"] = _NO_WINDOW
 
+        cmd_display = args if isinstance(args, str) else subprocess.list2cmdline(args)
+
         try:
             return subprocess.run(args, timeout=timeout, check=raise_on_error, **kwargs)
         except FileNotFoundError as exc:
             if not raise_on_error:
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr=str(exc))
             raise PythonRuntimeError(
-                f"Command not found.\n{' '.join(args)}\n{exc}"
+                f"Command not found.\n{cmd_display}\n{exc}"
             ) from exc
         except OSError as exc:
             if not raise_on_error:
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr=str(exc))
             raise PythonRuntimeError(
-                f"Failed to execute command.\n{' '.join(args)}\n{exc}"
+                f"Failed to execute command.\n{cmd_display}\n{exc}"
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise PythonRuntimeError(
-                f"Command timed out after {timeout} seconds.\n{' '.join(args)}"
+                f"Command timed out after {timeout} seconds.\n{cmd_display}"
             ) from exc
         except subprocess.CalledProcessError as exc:
             details = self._summarize_output(exc.stderr or exc.stdout)
             raise PythonRuntimeError(
-                f"Command failed with exit code {exc.returncode}.\n{' '.join(args)}\n{details}"
+                f"Command failed with exit code {exc.returncode}.\n{cmd_display}\n{details}"
             ) from exc
 
     @staticmethod

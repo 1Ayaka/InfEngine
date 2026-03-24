@@ -95,3 +95,7 @@ class WindowManager:
     def reset_layout(self) -> None:
         """Reset the ImGui docking layout to defaults."""
         ...
+
+    def process_pending_actions(self) -> None:
+        """Apply queued open/close/layout mutations before the next GUI frame."""
+        ...

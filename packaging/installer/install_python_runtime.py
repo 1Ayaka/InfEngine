@@ -116,7 +116,56 @@ def _download_file(url: str, dest: str) -> None:
         raise
 
 
-def _run_hidden(args: list[str], *, timeout: int) -> None:
+# Python installer exit code indicating "success – reboot required".
+_EXITCODE_REBOOT_REQUIRED = 3010
+
+
+def _quote_burn(value: str) -> str:
+    """Quote a value for the Burn bootstrapper command line."""
+    if " " in value or '"' in value:
+        return f'"{value}"'
+    return value
+
+
+def _build_installer_cmdline(
+    installer_path: str,
+    ui_flag: str,
+    log_path: str,
+    target_dir: str,
+) -> str:
+    """Build command line for the Python Burn bootstrapper.
+
+    The Burn engine has its own command-line parser that differs from the
+    standard C runtime rules used by ``subprocess.list2cmdline``.  In
+    particular, ``TargetDir=`` needs the *value* quoted, not the whole
+    ``property=value`` token.  We construct the command as a raw string
+    so it is passed directly to ``CreateProcess``.
+    """
+    parts = [
+        _quote_burn(installer_path),
+        ui_flag,
+        f"/log {_quote_burn(log_path)}",
+        "InstallAllUsers=0",
+        f"TargetDir={_quote_burn(target_dir)}",
+        "AssociateFiles=0",
+        "CompileAll=0",
+        "Include_debug=0",
+        "Include_dev=0",
+        "Include_doc=0",
+        "Include_launcher=0",
+        "Include_pip=1",
+        "Include_symbols=0",
+        "Include_tcltk=1",
+        "Include_test=0",
+        "LauncherOnly=0",
+        "PrependPath=0",
+        "Shortcuts=0",
+    ]
+    return " ".join(parts)
+
+
+def _run_hidden(cmd, *, timeout: int, ok_codes: tuple[int, ...] = (0,)) -> int:
+    """Run *cmd* (a string or arg list) hidden and return the exit code."""
     kwargs = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
@@ -126,12 +175,14 @@ def _run_hidden(args: list[str], *, timeout: int) -> None:
     if sys.platform == "win32":
         kwargs["creationflags"] = 0x08000000
 
-    completed = subprocess.run(args, timeout=timeout, **kwargs)
-    if completed.returncode != 0:
+    completed = subprocess.run(cmd, timeout=timeout, **kwargs)
+    if completed.returncode not in ok_codes:
         details = (completed.stderr or completed.stdout or "").strip()
+        cmdline = cmd if isinstance(cmd, str) else subprocess.list2cmdline(cmd)
         raise RuntimeError(
-            f"Command failed with exit code {completed.returncode}: {' '.join(args)}\n{details}"
+            f"Command failed with exit code {completed.returncode}: {cmdline}\n{details}"
         )
+    return completed.returncode
 
 
 def _show_message_box(title: str, message: str, icon: int = 0x40) -> None:
@@ -169,34 +220,40 @@ def install_runtime_for_app(app_dir: str, progress_callback=None) -> None:
         _emit(progress_callback, "Installing Python 3.12...")
         shutil.rmtree(python_root, ignore_errors=True)
         os.makedirs(python_root, exist_ok=True)
-        _run_hidden(
-            [
-                installer_path,
-                "/quiet",
-                "InstallAllUsers=0",
-                f'TargetDir={python_root}',
-                "AssociateFiles=0",
-                "CompileAll=0",
-                "Include_debug=0",
-                "Include_dev=0",
-                "Include_doc=0",
-                "Include_launcher=0",
-                "Include_pip=1",
-                "Include_symbols=0",
-                "Include_tcltk=1",
-                "Include_test=0",
-                "LauncherOnly=0",
-                "PrependPath=0",
-                "Shortcuts=0",
-                "SimpleInstall=1",
-            ],
-            timeout=1800,
-        )
+
+        log_path = os.path.join(runtime_dir, "python_install.log")
+
+        # Try quiet first, fall back to passive (shows progress bar) on failure.
+        for ui_flag in ("/quiet", "/passive"):
+            cmdline = _build_installer_cmdline(
+                installer_path, ui_flag, log_path, python_root,
+            )
+            try:
+                _run_hidden(
+                    cmdline,
+                    timeout=1800,
+                    ok_codes=(0, _EXITCODE_REBOOT_REQUIRED),
+                )
+                break
+            except RuntimeError:
+                if ui_flag == "/passive":
+                    raise
+                _emit(progress_callback, "Silent install failed, retrying with progress UI...")
+
+        # Locate python.exe – the installer may place it in a subdirectory.
+        if not _is_python312(python_exe):
+            found = _find_installed_python(python_root)
+            if found:
+                python_exe = found
 
     if not os.path.isfile(python_exe):
+        log_hint = ""
+        log_path = os.path.join(runtime_dir, "python_install.log")
+        if os.path.isfile(log_path):
+            log_hint = f"\nInstaller log: {log_path}"
         raise RuntimeError(
             "Python 3.12 executable was not found after installation:\n"
-            f"{python_exe}"
+            f"{python_exe}{log_hint}"
         )
 
     # 3. Create the reusable venv template.

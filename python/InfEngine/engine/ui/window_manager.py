@@ -2,7 +2,8 @@
 Window Manager for InfEngine Editor.
 Manages window visibility, registration, and provides Window menu functionality.
 """
-from typing import Dict, Type, Callable, Optional, Any
+from collections import deque
+from typing import Deque, Dict, Type, Callable, Optional, Any
 from InfEngine.lib import InfGUIRenderable
 
 
@@ -48,6 +49,8 @@ class WindowManager:
         self._window_instances: Dict[str, InfGUIRenderable] = {}  # window_id -> instance
         self._default_instances: Dict[str, InfGUIRenderable] = {}  # window_id -> original instance
         self._imgui_ini_path: Optional[str] = None
+        self._pending_actions: Deque[Callable[[], None]] = deque()
+        self._is_processing_actions = False
         WindowManager._instance = self
     
     @classmethod
@@ -104,14 +107,26 @@ class WindowManager:
             print(f"[WindowManager] Window already open: {window_id}")
             return self._window_instances.get(window_id)
         
-        # Create new instance
+        pending_instance = self._window_instances.get(window_id)
+        if pending_instance is not None and self._open_windows.get(window_id, False):
+            return pending_instance
+
+        # Create new instance immediately so callers can still configure it,
+        # but defer actual GUI registration until before the next frame.
         instance = info.factory()
-        # Wire up window manager reference for ClosablePanel subclasses
         if hasattr(instance, 'set_window_manager'):
             instance.set_window_manager(self)
         self._window_instances[window_id] = instance
         self._open_windows[window_id] = True
-        self._engine.register_gui(window_id, instance)
+
+        def _register_instance(target_id=window_id, target_instance=instance):
+            if not self._open_windows.get(target_id, False):
+                return
+            if self._window_instances.get(target_id) is not target_instance:
+                return
+            self._engine.register_gui(target_id, target_instance)
+
+        self._enqueue_action(_register_instance)
         return instance
     
     def close_window(self, window_id: str):
@@ -119,8 +134,15 @@ class WindowManager:
         if window_id in self._open_windows:
             self._open_windows[window_id] = False
             if window_id in self._window_instances:
-                self._engine.unregister_gui(window_id)
-                del self._window_instances[window_id]
+                instance = self._window_instances[window_id]
+
+                def _unregister_instance(target_id=window_id, target_instance=instance):
+                    if self._window_instances.get(target_id) is not target_instance:
+                        return
+                    self._engine.unregister_gui(target_id)
+                    self._window_instances.pop(target_id, None)
+
+                self._enqueue_action(_unregister_instance)
     
     def is_window_open(self, window_id: str) -> bool:
         """Check if a window is currently open."""
@@ -157,25 +179,49 @@ class WindowManager:
         self._imgui_ini_path = path
 
     def reset_layout(self):
-        """Reset to default layout: re-open all default panels, clear ImGui docking state."""
-        import os
+        """Reset to default layout: re-open default panels, clear ImGui docking state."""
+        self._enqueue_action(self._apply_reset_layout)
+
+    def process_pending_actions(self):
+        """Run queued GUI mutations before ImGui starts building the next frame."""
+        if self._is_processing_actions:
+            return
+
+        self._is_processing_actions = True
+        try:
+            while self._pending_actions:
+                action = self._pending_actions.popleft()
+                action()
+        finally:
+            self._is_processing_actions = False
+
+    def _enqueue_action(self, action: Callable[[], None]):
+        self._pending_actions.append(action)
+
+    def _apply_reset_layout(self):
         # 1. Close any dynamically-opened windows (not part of default set)
         dynamic_ids = [wid for wid in list(self._open_windows) if wid not in self._default_instances]
         for wid in dynamic_ids:
-            self.close_window(wid)
+            self._open_windows[wid] = False
+            self._engine.unregister_gui(wid)
+            self._window_instances.pop(wid, None)
 
         # 2. Force ALL default panels to be open and registered
         for window_id, instance in self._default_instances.items():
-            # Ensure the panel considers itself open
             if hasattr(instance, '_is_open'):
                 instance._is_open = True
-            # If the window was closed (unregistered), re-register it
-            if not self._open_windows.get(window_id, False):
+
+            if hasattr(instance, 'set_window_manager'):
+                instance.set_window_manager(self)
+
+            if self._window_instances.get(window_id) is not instance:
                 self._window_instances[window_id] = instance
+
+            if not self._open_windows.get(window_id, False):
                 self._open_windows[window_id] = True
-                if hasattr(instance, 'set_window_manager'):
-                    instance.set_window_manager(self)
                 self._engine.register_gui(window_id, instance)
+            else:
+                self._open_windows[window_id] = True
 
         # 3. Clear ImGui in-memory docking layout + delete ini file (C++ side)
         self._engine.reset_imgui_layout()

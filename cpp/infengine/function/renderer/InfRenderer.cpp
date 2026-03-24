@@ -1131,6 +1131,9 @@ void InfRenderer::ResizeSceneRenderTarget(uint32_t width, uint32_t height)
 {
     if (m_sceneRenderTarget && width > 0 && height > 0) {
         m_sceneRenderTarget->Resize(width, height);
+        if (m_sceneRenderGraph) {
+            m_sceneRenderGraph->OnResize(width, height);
+        }
         // Update aspect ratio for projection matrix calculation
         if (m_vkCore) {
             m_vkCore->SetSceneRenderTargetSize(width, height);

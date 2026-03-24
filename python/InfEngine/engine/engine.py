@@ -161,6 +161,13 @@ class Engine():
                 DeferredTaskRunner.instance().tick()
             except Exception:
                 pass
+            try:
+                from InfEngine.engine.ui.window_manager import WindowManager
+                manager = WindowManager.instance()
+                if manager is not None:
+                    manager.process_pending_actions()
+            except Exception:
+                pass
         self._engine.set_pre_gui_callback(_pre_gui_tick)
 
         Debug.log_internal("Engine started")
