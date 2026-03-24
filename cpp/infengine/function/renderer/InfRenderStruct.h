@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include <function/renderer/Frustum.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -140,6 +141,7 @@ struct DrawCall
     std::shared_ptr<InfMaterial> material; // Material to use (nullptr = default)
     uint64_t objectId = 0;                 // GameObject ID for buffer lookup
     bool frustumVisible = true;            // Whether object passed main-camera frustum culling
+    AABB worldBounds;                       // World-space bounding box for shadow cascade culling
 
     // Per-object mesh data pointers (Phase 2.3.4)
     // Non-owning references to MeshRenderer's persistent vertex/index data.

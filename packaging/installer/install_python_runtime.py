@@ -9,6 +9,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 def _first_existing_path(paths: list[str]) -> str | None:
@@ -98,6 +99,13 @@ def _runtime_installer_info_for_machine() -> tuple[str, str]:
             "https://www.python.org/ftp/python/3.12.8/python-3.12.8.exe",
         )
     raise RuntimeError(f"Unsupported Windows architecture: {machine}")
+
+
+def _user_runtime_dir() -> str:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return os.path.join(local_app_data, "InfEngineHub", "runtime")
+    return str(Path.home() / ".infengine" / "runtime")
 
 
 def _download_file(url: str, dest: str) -> None:
@@ -202,15 +210,19 @@ def _emit(progress_callback, message: str) -> None:
 def install_runtime_for_app(app_dir: str, progress_callback=None) -> None:
     installer_name, installer_url = _runtime_installer_info_for_machine()
     hub_data_dir = os.path.join(app_dir, "InfEngineHubData")
-    runtime_dir = os.path.join(hub_data_dir, "runtime")
-    python_root = os.path.join(hub_data_dir, "python312")
+    bundled_runtime_dir = os.path.join(hub_data_dir, "runtime")
+    runtime_dir = _user_runtime_dir()
+    python_root = os.path.join(runtime_dir, "python312")
     template_dir = os.path.join(runtime_dir, "venv_template")
     installer_path = os.path.join(runtime_dir, installer_name)
+    bundled_installer_path = os.path.join(bundled_runtime_dir, installer_name)
     python_exe = os.path.join(python_root, "python.exe")
 
     os.makedirs(runtime_dir, exist_ok=True)
 
     # 1. Download the full Python installer (skipped if already cached).
+    if not os.path.isfile(installer_path) and os.path.isfile(bundled_installer_path):
+        shutil.copy2(bundled_installer_path, installer_path)
     if not os.path.isfile(installer_path):
         _emit(progress_callback, f"Downloading Python 3.12 for {platform.machine()}...")
         _download_file(installer_url, installer_path)

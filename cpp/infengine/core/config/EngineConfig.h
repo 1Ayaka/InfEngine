@@ -99,7 +99,7 @@ struct EngineConfig
     uint32_t physicsMaxContactConstraints = 65536;
 
     /// Number of collision substeps per physics step.
-    int physicsCollisionSteps = 2;
+    int physicsCollisionSteps = 1;
 
     /// Default gravity vector.
     glm::vec3 physicsGravity{0.0f, -9.81f, 0.0f};

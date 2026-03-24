@@ -22,6 +22,21 @@ _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _RUNTIME_ROOT = Path.home() / ".infengine" / "runtime"
 
 
+def _managed_runtime_dir() -> str:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return os.path.join(local_app_data, "InfEngineHub", "runtime")
+    return str(_RUNTIME_ROOT)
+
+
+def _legacy_managed_runtime_dir() -> str:
+    return os.path.join(get_hub_data_dir(), "runtime")
+
+
+def _legacy_private_runtime_root() -> str:
+    return os.path.join(get_hub_data_dir(), "python312")
+
+
 def _first_existing_path(paths: list[str]) -> Optional[str]:
     for path in paths:
         if path and os.path.isfile(path):
@@ -83,7 +98,7 @@ class PythonRuntimeManager:
         return os.path.join(get_bundle_dir(), "InfEngineHubData", "runtime")
 
     def installed_runtime_dir(self) -> str:
-        return os.path.join(get_hub_data_dir(), "runtime")
+        return _managed_runtime_dir()
 
     def installer_path(self) -> str:
         name, _ = _runtime_installer_info_for_machine()
@@ -100,6 +115,7 @@ class PythonRuntimeManager:
     def _get_pip_candidates(self) -> list[str]:
         return [
             os.path.join(self.installed_runtime_dir(), "get-pip.py"),
+            os.path.join(_legacy_managed_runtime_dir(), "get-pip.py"),
             os.path.join(self.bundled_runtime_dir(), "get-pip.py"),
             str(_RUNTIME_ROOT / "get-pip.py"),
         ]
@@ -107,12 +123,13 @@ class PythonRuntimeManager:
     def _wheelhouse_dirs(self) -> list[str]:
         return _existing_dirs([
             os.path.join(self.installed_runtime_dir(), "wheels"),
+            os.path.join(_legacy_managed_runtime_dir(), "wheels"),
             os.path.join(self.bundled_runtime_dir(), "wheels"),
             str(_RUNTIME_ROOT / "wheels"),
         ])
 
     def private_runtime_root(self) -> str:
-        return os.path.join(get_hub_data_dir(), "python312")
+        return os.path.join(self.installed_runtime_dir(), "python312")
 
     def private_runtime_python(self) -> str:
         if sys.platform == "win32":
@@ -120,33 +137,39 @@ class PythonRuntimeManager:
         return os.path.join(self.private_runtime_root(), "bin", "python")
 
     def _private_runtime_candidates(self) -> list[str]:
-        root = self.private_runtime_root()
+        roots = [self.private_runtime_root(), _legacy_private_runtime_root()]
         candidates = [self.private_runtime_python()]
-
         if sys.platform == "win32":
-            candidates.extend(
-                [
-                    os.path.join(root, "Python.exe"),
-                    os.path.join(root, "Python312", "python.exe"),
-                ]
-            )
+            candidates.append(os.path.join(_legacy_private_runtime_root(), "python.exe"))
         else:
-            candidates.append(os.path.join(root, "bin", "python"))
+            candidates.append(os.path.join(_legacy_private_runtime_root(), "bin", "python"))
 
-        if os.path.isdir(root):
-            for current_root, _dirs, files in os.walk(root):
-                for filename in files:
-                    if sys.platform == "win32":
-                        if filename.lower() != "python.exe":
+        for root in roots:
+            if sys.platform == "win32":
+                candidates.extend(
+                    [
+                        os.path.join(root, "Python.exe"),
+                        os.path.join(root, "Python312", "python.exe"),
+                    ]
+                )
+            else:
+                candidates.append(os.path.join(root, "bin", "python"))
+
+        for root in roots:
+            if os.path.isdir(root):
+                for current_root, _dirs, files in os.walk(root):
+                    for filename in files:
+                        if sys.platform == "win32":
+                            if filename.lower() != "python.exe":
+                                continue
+                        elif filename != "python":
                             continue
-                    elif filename != "python":
-                        continue
-                    candidates.append(os.path.join(current_root, filename))
+                        candidates.append(os.path.join(current_root, filename))
 
         return self._dedupe_candidates(candidates)
 
     def venv_template_root(self) -> str:
-        return os.path.join(get_hub_data_dir(), "runtime", "venv_template")
+        return os.path.join(self.installed_runtime_dir(), "venv_template")
 
     def venv_template_python(self) -> str:
         if sys.platform == "win32":

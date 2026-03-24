@@ -225,6 +225,7 @@ DrawCallResult SceneRenderer::BuildDrawCalls() const
                 dc.material = renderer->GetEffectiveMaterial(0);
                 dc.objectId = renderable.objectId;
                 dc.frustumVisible = renderable.visible;
+                dc.worldBounds = renderable.worldBounds;
                 dc.meshVertices = &objVertices;
                 dc.meshIndices = &objIndices;
                 dc.forceBufferUpdate = bufferDirty;
@@ -246,6 +247,7 @@ DrawCallResult SceneRenderer::BuildDrawCalls() const
                 dc.material = renderer->GetEffectiveMaterial(0);
                 dc.objectId = renderable.objectId;
                 dc.frustumVisible = renderable.visible;
+                dc.worldBounds = renderable.worldBounds;
                 dc.meshVertices = &objVertices;
                 dc.meshIndices = &objIndices;
                 dc.forceBufferUpdate = bufferDirty;
@@ -278,6 +280,7 @@ DrawCallResult SceneRenderer::BuildDrawCalls() const
                     dc.material = renderer->GetEffectiveMaterial(matSlot);
                     dc.objectId = renderable.objectId;
                     dc.frustumVisible = renderable.visible;
+                    dc.worldBounds = renderable.worldBounds;
                     dc.meshVertices = &objVertices;
                     dc.meshIndices = &objIndices;
                     dc.forceBufferUpdate = firstDirty ? bufferDirty : false;
@@ -305,6 +308,7 @@ DrawCallResult SceneRenderer::BuildDrawCalls() const
             dc.material = renderer->GetEffectiveMaterial(0);
             dc.objectId = renderable.objectId;
             dc.frustumVisible = renderable.visible;
+            dc.worldBounds = renderable.worldBounds;
             dc.meshVertices = &objVertices;
             dc.meshIndices = &objIndices;
             result.drawCalls.push_back(dc);

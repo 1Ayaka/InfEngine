@@ -13,6 +13,7 @@
 #include "SceneRenderGraph.h"
 #include "vk/VkTypes.h"
 
+#include <function/renderer/Frustum.h>
 #include <function/renderer/shader/ShaderProgram.h>
 #include <function/resources/AssetRegistry/AssetRegistry.h>
 #include <function/resources/InfMaterial/InfMaterial.h>
@@ -644,7 +645,7 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
         }
         if (pip == VK_NULL_HANDLE)
             continue; // no per-material shadow pipeline available, skip
-        m_shadowDrawScratch.push_back({&dc, bufIt, pip});
+        m_shadowDrawScratch.push_back({&dc, bufIt, pip, dc.worldBounds});
     }
 
 #if INFENGINE_FRAME_PROFILE
@@ -667,6 +668,13 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
     }
 
     uint64_t issuedDraws = 0;
+
+    // Pre-extract frustums for all cascades (for per-cascade AABB culling)
+    Frustum cascadeFrustums[NUM_SHADOW_CASCADES];
+    for (uint32_t ci = 0; ci < cascadeCount && ci < NUM_SHADOW_CASCADES; ++ci) {
+        cascadeFrustums[ci].ExtractFromMatrix(m_lightCollector.GetShadowLightVP(ci));
+    }
+
     for (uint32_t ci = 0; ci < cascadeCount; ++ci) {
         uint32_t descIdx = frameIndex * NUM_SHADOW_CASCADES + ci;
         if (descIdx >= m_shadowDescSets.size())
@@ -695,8 +703,13 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
         vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipelineLayout, 0, 1, &cascadeDescSet,
                                 0, nullptr);
 
+        const Frustum &cascadeFrustum = cascadeFrustums[ci];
         VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
         for (const auto &sd : m_shadowDrawScratch) {
+            // Per-cascade frustum culling: skip objects outside this cascade's light-space volume
+            if (sd.worldBounds.IsValid() && !cascadeFrustum.IntersectsAABB(sd.worldBounds))
+                continue;
+
             // Bind per-material shadow pipeline (or global fallback)
             if (sd.shadowPipeline != lastBoundPipeline) {
                 vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, sd.shadowPipeline);
@@ -709,7 +722,9 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
                 glm::mat4 normalMat;
             } pushData;
             pushData.model = sd.dc->worldMatrix;
-            pushData.normalMat = glm::transpose(glm::inverse(sd.dc->worldMatrix));
+            // Shadow pass only writes depth — normalMat is unused by the shader.
+            // Skip the expensive glm::inverse() computation (was 4000+ calls/frame).
+            pushData.normalMat = glm::mat4(1.0f);
 
             vkCmdPushConstants(cmdBuf, m_shadowPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushData),
                                &pushData);

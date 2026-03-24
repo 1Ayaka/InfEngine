@@ -831,6 +831,7 @@ class InfVkCoreModular
         const DrawCall *dc;
         std::unordered_map<uint64_t, PerObjectBuffers>::const_iterator bufIt;
         VkPipeline shadowPipeline;
+        AABB worldBounds;  // Cached for per-cascade frustum culling
     };
     std::vector<ShadowDraw> m_shadowDrawScratch;
 
