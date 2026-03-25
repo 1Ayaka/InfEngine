@@ -233,10 +233,16 @@ class SceneRenderGraph
     void EnsureGraphBuilt();
 
     /// @brief Diagnostic: whether the graph is currently built and ready to execute
-    [[nodiscard]] bool IsGraphBuilt() const { return m_graphBuilt; }
+    [[nodiscard]] bool IsGraphBuilt() const
+    {
+        return m_graphBuilt;
+    }
 
     /// @brief Diagnostic: whether the graph needs a rebuild before next execute
-    [[nodiscard]] bool NeedsRebuild() const { return m_needsRebuild; }
+    [[nodiscard]] bool NeedsRebuild() const
+    {
+        return m_needsRebuild;
+    }
 
     /**
      * @brief Called when scene render target is resized

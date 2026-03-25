@@ -296,7 +296,10 @@ class InfVkCoreModular
 
     /// @brief Advance the frame counter for EnsureObjectBuffers dedup.
     /// Call once per frame before any Render calls.
-    void AdvanceEnsureFrame() { ++m_ensureFrameCounter; }
+    void AdvanceEnsureFrame()
+    {
+        ++m_ensureFrameCounter;
+    }
 
     /// @brief Remove per-object buffers for objects that are no longer active.
     /// Call once per frame after SetDrawCalls with the current active draw calls.
@@ -720,9 +723,8 @@ class InfVkCoreModular
         return m_drawSubCount;
     }
     void GetDrawSubCounters(uint64_t &filteredCalls, uint64_t &filteredEligible, uint64_t &filteredIssued,
-                            uint64_t &filteredActualDraws,
-                            uint64_t &shadowCalls, uint64_t &shadowEligible, uint64_t &shadowIssued,
-                            uint64_t &shadowActualDraws) const
+                            uint64_t &filteredActualDraws, uint64_t &shadowCalls, uint64_t &shadowEligible,
+                            uint64_t &shadowIssued, uint64_t &shadowActualDraws) const
     {
         filteredCalls = m_drawSceneFilteredCalls;
         filteredEligible = m_drawSceneFilteredEligible;
@@ -842,8 +844,7 @@ class InfVkCoreModular
     };
 
     /// @brief FNV-1a content hash for mesh data deduplication.
-    static size_t HashMeshContent(const void *vertexData, size_t vertexBytes,
-                                  const void *indexData, size_t indexBytes)
+    static size_t HashMeshContent(const void *vertexData, size_t vertexBytes, const void *indexData, size_t indexBytes)
     {
         // FNV-1a 64-bit
         constexpr size_t fnvOffset = 14695981039346656037ULL;
@@ -925,7 +926,7 @@ class InfVkCoreModular
         const DrawCall *dc;
         std::unordered_map<uint64_t, PerObjectBuffers>::const_iterator bufIt;
         VkPipeline shadowPipeline;
-        AABB worldBounds;  // Cached for per-cascade frustum culling
+        AABB worldBounds; // Cached for per-cascade frustum culling
     };
     std::vector<ShadowDraw> m_shadowDrawScratch;
     std::vector<uint32_t> m_shadowCascadeVisible; ///< Per-cascade visible indices into m_shadowDrawScratch
@@ -1027,7 +1028,7 @@ class InfVkCoreModular
     /// @brief Update the globals descriptor set binding 1 with the current frame's instance buffer.
     void UpdateInstanceBufferDescriptor(uint32_t frameIndex);
 
-public:
+  public:
     /// @brief Pre-allocate the instance SSBO for the current frame and update
     /// its descriptor set.  Must be called BEFORE any draws that bind the
     /// globals descriptor set (i.e. before the render-graph executor runs).

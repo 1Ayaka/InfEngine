@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <core/log/InfLog.h>
-#include <function/resources/InfMaterial/InfMaterial.h>
 #include <cstring>
+#include <function/resources/InfMaterial/InfMaterial.h>
 #include <glm/glm.hpp>
 #include <unordered_set>
 
@@ -289,10 +289,10 @@ DrawCallResult GizmosDrawCallBuffer::GetIconDrawCalls(std::shared_ptr<InfMateria
             } else if (icon.iconKind == ICON_KIND_LIGHT) {
                 kindName = "light";
             }
-            INFLOG_INFO("GizmoIcons: entry[", i, "] kind=", kindName, " objectId=", icon.objectId, " pos=",
-                        icon.position.x, ",", icon.position.y, ",", icon.position.z, " distance=",
-                        (i < iconDistances.size() ? iconDistances[i] : -1.0f), " material=",
-                        (i < iconMaterialNames.size() ? iconMaterialNames[i] : std::string("<missing>")));
+            INFLOG_INFO("GizmoIcons: entry[", i, "] kind=", kindName, " objectId=", icon.objectId,
+                        " pos=", icon.position.x, ",", icon.position.y, ",", icon.position.z,
+                        " distance=", (i < iconDistances.size() ? iconDistances[i] : -1.0f),
+                        " material=", (i < iconMaterialNames.size() ? iconMaterialNames[i] : std::string("<missing>")));
         }
         s_lastIconEntryCount = m_iconEntries.size();
         s_lastBuiltIconDrawCallCount = result.drawCalls.size();

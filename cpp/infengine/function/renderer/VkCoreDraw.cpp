@@ -343,20 +343,17 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
                 if (matName.find("GizmoIcon") != std::string::npos || matName.find("Gizmo") != std::string::npos) {
                     const DrawCall &dc = *entry.dc;
                     auto bufIt = m_perObjectBuffers.find(dc.objectId);
-                    bool hasBuf = (bufIt != m_perObjectBuffers.end() && bufIt->second.vertexBuffer && bufIt->second.indexBuffer);
+                    bool hasBuf =
+                        (bufIt != m_perObjectBuffers.end() && bufIt->second.vertexBuffer && bufIt->second.indexBuffer);
                     VkPipeline pip = entry.material->GetPassPipeline(ShaderCompileTarget::Forward);
                     VkDescriptorSet ds = entry.material->GetPassDescriptorSet(ShaderCompileTarget::Forward);
-                    INFLOG_INFO("[IconDiag] eligible: mat='", matName,
-                                "' queue=", entry.material->GetRenderQueue(),
-                                " objId=", dc.objectId,
-                                " idxCount=", dc.indexCount,
-                                " hasBuf=", hasBuf,
+                    INFLOG_INFO("[IconDiag] eligible: mat='", matName, "' queue=", entry.material->GetRenderQueue(),
+                                " objId=", dc.objectId, " idxCount=", dc.indexCount, " hasBuf=", hasBuf,
                                 " pipeline=", (pip != VK_NULL_HANDLE ? "OK" : "NULL"),
                                 " descSet=", (ds != VK_NULL_HANDLE ? "OK" : "NULL"),
-                                " blend=", entry.material->GetRenderState().blendEnable,
-                                " qRange=[", queueMin, "-", queueMax, "]",
-                                " vert='", entry.material->GetVertShaderName(),
-                                "' frag='", entry.material->GetFragShaderName(), "'");
+                                " blend=", entry.material->GetRenderState().blendEnable, " qRange=[", queueMin, "-",
+                                queueMax, "]", " vert='", entry.material->GetVertShaderName(), "' frag='",
+                                entry.material->GetFragShaderName(), "'");
                     ++s_iconDiagCount;
                 }
             }
@@ -555,10 +552,10 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
         VkBuffer vb = bufIt->second.vertexBuffer->GetBuffer();
 
         // Check if this entry can extend the current batch
-        bool canExtendBatch =
-            allowBatching && batchInstanceCount > 0 && pipeline == currentPipeline &&
-            descriptorSet == currentDescriptorSet && matRaw == currentMaterialRaw && vb == currentVertexBuffer &&
-            dc.indexStart == batchIndexStart && dc.indexCount == batchIndexCount && dc.vertexStart == batchVertexStart;
+        bool canExtendBatch = allowBatching && batchInstanceCount > 0 && pipeline == currentPipeline &&
+                              descriptorSet == currentDescriptorSet && matRaw == currentMaterialRaw &&
+                              vb == currentVertexBuffer && dc.indexStart == batchIndexStart &&
+                              dc.indexCount == batchIndexCount && dc.vertexStart == batchVertexStart;
 
         if (canExtendBatch) {
             ++batchInstanceCount;
@@ -728,18 +725,17 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
     }
 
     // Sort shadow draw scratch by (pipeline, VB, submesh) for instanced batching
-    std::sort(m_shadowDrawScratch.begin(), m_shadowDrawScratch.end(),
-              [](const ShadowDraw &a, const ShadowDraw &b) {
-                  if (a.shadowPipeline != b.shadowPipeline)
-                      return a.shadowPipeline < b.shadowPipeline;
-                  VkBuffer va = a.bufIt->second.vertexBuffer->GetBuffer();
-                  VkBuffer vb_b = b.bufIt->second.vertexBuffer->GetBuffer();
-                  if (va != vb_b)
-                      return va < vb_b;
-                  if (a.dc->indexStart != b.dc->indexStart)
-                      return a.dc->indexStart < b.dc->indexStart;
-                  return a.dc->indexCount < b.dc->indexCount;
-              });
+    std::sort(m_shadowDrawScratch.begin(), m_shadowDrawScratch.end(), [](const ShadowDraw &a, const ShadowDraw &b) {
+        if (a.shadowPipeline != b.shadowPipeline)
+            return a.shadowPipeline < b.shadowPipeline;
+        VkBuffer va = a.bufIt->second.vertexBuffer->GetBuffer();
+        VkBuffer vb_b = b.bufIt->second.vertexBuffer->GetBuffer();
+        if (va != vb_b)
+            return va < vb_b;
+        if (a.dc->indexStart != b.dc->indexStart)
+            return a.dc->indexStart < b.dc->indexStart;
+        return a.dc->indexCount < b.dc->indexCount;
+    });
 
 #if INFENGINE_FRAME_PROFILE
     stageNow = Clock::now();
@@ -852,7 +848,11 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
         auto emitShadowBatch = [&]() {
             if (batchCount == 0)
                 return;
-            struct PushData { glm::mat4 model; glm::mat4 normalMat; } pushData;
+            struct PushData
+            {
+                glm::mat4 model;
+                glm::mat4 normalMat;
+            } pushData;
             pushData.model = m_shadowDrawScratch[m_shadowCascadeVisible[batchStart]].dc->worldMatrix;
             pushData.normalMat = glm::mat4(1.0f);
             vkCmdPushConstants(cmdBuf, m_shadowPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushData),
@@ -1199,10 +1199,8 @@ void InfVkCoreModular::EnsureObjectBuffers(uint64_t objectId, const std::vector<
             return;
         }
         // Fast path: if data pointers AND sizes match, content hasn't changed
-        if (objectIt->second.lastVertexPtr == vertices.data() &&
-            objectIt->second.lastIndexPtr == indices.data() &&
-            objectIt->second.vertexCount == vertices.size() &&
-            objectIt->second.indexCount == indices.size()) {
+        if (objectIt->second.lastVertexPtr == vertices.data() && objectIt->second.lastIndexPtr == indices.data() &&
+            objectIt->second.vertexCount == vertices.size() && objectIt->second.indexCount == indices.size()) {
             objectIt->second.ensuredOnFrame = m_ensureFrameCounter;
             return;
         }
@@ -1224,10 +1222,10 @@ void InfVkCoreModular::EnsureObjectBuffers(uint64_t objectId, const std::vector<
     }
 
     auto sharedIt = m_sharedMeshBuffers.find(sharedKey);
-    const bool needsCreate = (sharedIt == m_sharedMeshBuffers.end() || forceUpdate ||
-                              sharedIt->second.vertexCount != vertices.size() ||
-                              sharedIt->second.indexCount != indices.size() || !sharedIt->second.vertexBuffer ||
-                              !sharedIt->second.indexBuffer);
+    const bool needsCreate =
+        (sharedIt == m_sharedMeshBuffers.end() || forceUpdate || sharedIt->second.vertexCount != vertices.size() ||
+         sharedIt->second.indexCount != indices.size() || !sharedIt->second.vertexBuffer ||
+         !sharedIt->second.indexBuffer);
 
     if (needsCreate) {
         SharedMeshBuffers oldSharedBuffers;

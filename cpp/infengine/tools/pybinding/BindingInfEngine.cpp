@@ -1,8 +1,9 @@
 #include "InfEngine.h"
 // Explicit includes for types now only forward-declared in InfRenderer.h
+#include <SDL3/SDL.h>
 #include <cmath>
-#include <core/log/InfLog.h>
 #include <core/config/EngineConfig.h>
+#include <core/log/InfLog.h>
 #include <function/renderer/EditorTools.h>
 #include <function/renderer/GizmosDrawCallBuffer.h>
 #include <function/renderer/SceneRenderGraph.h>
@@ -13,7 +14,6 @@
 #include <function/renderer/gui/InfScreenUIRenderer.h>
 #include <function/scene/EditorCameraController.h>
 #include <glm/glm.hpp>
-#include <SDL3/SDL.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -314,8 +314,7 @@ PYBIND11_MODULE(_InfEngine, m)
             "Heavy scene loads run here, sandwiched by SDL_PumpEvents to prevent\n"
             "Windows from flagging the application as Not Responding.")
         .def(
-            "pump_events",
-            [](InfEngine & /*self*/) { SDL_PumpEvents(); },
+            "pump_events", [](InfEngine & /*self*/) { SDL_PumpEvents(); },
             "Pump the OS message queue to prevent Windows Not Responding during long operations")
         .def("set_log_level", &InfEngine::SetLogLevel)
         .def(
@@ -814,8 +813,9 @@ PYBIND11_MODULE(_InfEngine, m)
             py::return_value_policy::reference, "Get the scene render graph for pass configuration");
 
     // ── Logging bridge: let Python write to the C++ InfLog (engine.log) ──
-    m.def("inflog_warn", [](const std::string &msg) { INFLOG_WARN(msg); },
-          py::arg("msg"), "Write a WARN-level message to the engine log.");
+    m.def(
+        "inflog_warn", [](const std::string &msg) { INFLOG_WARN(msg); }, py::arg("msg"),
+        "Write a WARN-level message to the engine log.");
 
     // Register all binding modules
     RegisterGUIBindings(m);

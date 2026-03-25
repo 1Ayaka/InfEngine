@@ -146,16 +146,16 @@ class GizmosDrawCallBuffer
      *   - Constant angular size relative to distance from camera
      *
      * @param iconMaterial  Material for icon rendering (TRIANGLE_LIST gizmo shader)
-    * @param cameraPos     Editor camera world position (for constant-size scaling)
-    * @param cameraRight   Editor camera world-space right axis
-    * @param cameraUp      Editor camera world-space up axis
+     * @param cameraPos     Editor camera world position (for constant-size scaling)
+     * @param cameraRight   Editor camera world-space right axis
+     * @param cameraUp      Editor camera world-space up axis
      * @return DrawCallResult containing all icon draw calls
      */
     [[nodiscard]] DrawCallResult GetIconDrawCalls(std::shared_ptr<InfMaterial> defaultIconMaterial,
                                                   std::shared_ptr<InfMaterial> cameraIconMaterial,
                                                   std::shared_ptr<InfMaterial> lightIconMaterial,
-                      const glm::vec3 &cameraPos, const glm::vec3 &cameraRight,
-                      const glm::vec3 &cameraUp) const;
+                                                  const glm::vec3 &cameraPos, const glm::vec3 &cameraRight,
+                                                  const glm::vec3 &cameraUp) const;
 
     /**
      * @brief Get icon entries for picking tests.

@@ -769,8 +769,8 @@ void Rigidbody::SyncExternalMovesToPhysics()
         }
         d.previousPhysicsPosition = currentPos;
         d.previousPhysicsRotation = currentRot;
-        d.currentPhysicsPosition  = currentPos;
-        d.currentPhysicsRotation  = currentRot;
+        d.currentPhysicsPosition = currentPos;
+        d.currentPhysicsRotation = currentRot;
         d.hasPhysicsPose = true;
         return;
     }

@@ -1,8 +1,8 @@
 #include "SceneRenderer.h"
 #include "SceneManager.h"
 #include <algorithm>
-#include <glm/gtc/matrix_transform.hpp>
 #include <cstring>
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace infengine
 {

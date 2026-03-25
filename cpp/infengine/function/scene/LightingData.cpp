@@ -379,7 +379,7 @@ void SceneLightCollector::ComputeShadowVP(Scene *scene, const glm::vec3 &cameraP
             // that shadow casters upstream along the light direction (behind) are
             // still included.  The far side only needs a small margin.
             float nearPad = std::max(200.0f, (maxs.z - mins.z) * 2.0f);
-            float farPad  = std::max(20.0f, (maxs.z - mins.z) * 0.35f);
+            float farPad = std::max(20.0f, (maxs.z - mins.z) * 0.35f);
             // GLM orthoLH_ZO: visible range is eye_z ∈ [zNear, zFar].
             // View-space z is positive for objects in front of the light.
             float orthoNear = mins.z - nearPad;

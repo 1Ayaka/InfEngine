@@ -3,10 +3,10 @@
 #include "GameObject.h"
 #include "SceneManager.h"
 #include <core/log/InfLog.h>
+#include <cstring>
 #include <function/resources/AssetDependencyGraph.h>
 #include <function/resources/AssetRegistry/AssetRegistry.h>
 #include <function/scene/PrimitiveMeshes.h>
-#include <cstring>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -27,10 +27,10 @@ bool MeshDataEquals(const std::shared_ptr<InfMesh> &mesh, const std::vector<Vert
     if (mesh->GetVertices().size() != vertices.size() || mesh->GetIndices().size() != indices.size())
         return false;
 
-    const bool sameVertices = vertices.empty() ||
-                              std::memcmp(mesh->GetVertices().data(), vertices.data(), vertices.size() * sizeof(Vertex)) == 0;
-    const bool sameIndices = indices.empty() ||
-                             std::memcmp(mesh->GetIndices().data(), indices.data(), indices.size() * sizeof(uint32_t)) == 0;
+    const bool sameVertices = vertices.empty() || std::memcmp(mesh->GetVertices().data(), vertices.data(),
+                                                              vertices.size() * sizeof(Vertex)) == 0;
+    const bool sameIndices = indices.empty() || std::memcmp(mesh->GetIndices().data(), indices.data(),
+                                                            indices.size() * sizeof(uint32_t)) == 0;
     return sameVertices && sameIndices;
 }
 
@@ -111,15 +111,14 @@ bool MatchesBuiltinPrimitiveMesh(const std::string &name, const std::vector<Vert
     if (builtinVertices->size() != vertices.size() || builtinIndices->size() != indices.size())
         return false;
 
-    const bool sameVertices = builtinVertices->empty() ||
-                              std::memcmp(builtinVertices->data(), vertices.data(), vertices.size() * sizeof(Vertex)) == 0;
-    const bool sameIndices = builtinIndices->empty() ||
-                             std::memcmp(builtinIndices->data(), indices.data(), indices.size() * sizeof(uint32_t)) == 0;
+    const bool sameVertices = builtinVertices->empty() || std::memcmp(builtinVertices->data(), vertices.data(),
+                                                                      vertices.size() * sizeof(Vertex)) == 0;
+    const bool sameIndices = builtinIndices->empty() || std::memcmp(builtinIndices->data(), indices.data(),
+                                                                    indices.size() * sizeof(uint32_t)) == 0;
     return sameVertices && sameIndices;
 }
 
-void RestoreBuiltinPrimitiveMesh(const std::string &name, std::vector<Vertex> &vertices,
-                                 std::vector<uint32_t> &indices)
+void RestoreBuiltinPrimitiveMesh(const std::string &name, std::vector<Vertex> &vertices, std::vector<uint32_t> &indices)
 {
     const std::vector<Vertex> *builtinVertices = nullptr;
     const std::vector<uint32_t> *builtinIndices = nullptr;
@@ -496,10 +495,10 @@ std::string MeshRenderer::Serialize() const
 
     const bool builtinPrimitive = m_useInlineMesh && !m_inlineMeshName.empty() &&
                                   MatchesBuiltinPrimitiveMesh(m_inlineMeshName, m_inlineVertices, m_inlineIndices);
-    const std::string matchedInlineMeshGuid = (!HasMeshAsset() && m_useInlineMesh && !builtinPrimitive)
-                                                  ? FindMatchingMeshAssetGuid(m_inlineVertices, m_inlineIndices,
-                                                                              m_inlineMeshName)
-                                                  : std::string();
+    const std::string matchedInlineMeshGuid =
+        (!HasMeshAsset() && m_useInlineMesh && !builtinPrimitive)
+            ? FindMatchingMeshAssetGuid(m_inlineVertices, m_inlineIndices, m_inlineMeshName)
+            : std::string();
     const std::string serializedMeshGuid = HasMeshAsset() ? m_meshAsset.GetGuid() : matchedInlineMeshGuid;
 
     // Mesh asset GUID (for model-file meshes managed by AssetRegistry)

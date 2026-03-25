@@ -203,9 +203,8 @@ void InfRenderer::PreparePipeline()
 
         // Hook RenderGraph execution into the pre-render callback
         m_vkCore->SetRenderGraphExecutor([this](VkCommandBuffer cmdBuf) {
-            const bool sceneViewActive =
-                (m_sceneViewVisible && m_sceneRenderTarget && m_sceneRenderTarget->IsReady() &&
-                 m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
+            const bool sceneViewActive = (m_sceneViewVisible && m_sceneRenderTarget && m_sceneRenderTarget->IsReady() &&
+                                          m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
 
             // Pre-allocate instance SSBO for all graphs so the buffer (and its
             // descriptor binding) never changes mid-recording.
@@ -500,9 +499,8 @@ void InfRenderer::DrawFrame()
     }
 
     // Render scene via Python SRP render pipeline
-    const bool sceneViewActive =
-        (m_sceneViewVisible && m_sceneRenderTarget && m_sceneRenderTarget->IsReady() &&
-         m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
+    const bool sceneViewActive = (m_sceneViewVisible && m_sceneRenderTarget && m_sceneRenderTarget->IsReady() &&
+                                  m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
 
     if (m_renderPipeline) {
         EditorGizmosContext gizmoCtx;
