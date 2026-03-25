@@ -24,6 +24,12 @@ from InfEngine.renderstack.render_pipeline import RenderPipeline
 from InfEngine.renderstack.resource_bus import ResourceBus
 
 
+def _scene_cache_key(scene) -> str:
+    if scene is None:
+        return ""
+    return str(getattr(scene, "name", ""))
+
+
 class RenderStackPipeline(RenderPipeline):
     """引擎级渲染入口 → RenderStack 的桥梁。
 
@@ -43,7 +49,7 @@ class RenderStackPipeline(RenderPipeline):
         # Cache for _find_render_stack to avoid O(N) scene scan every frame.
         self._cached_stack = None
         self._cached_stack_version: int = -1
-        self._cached_stack_scene_id: int = 0
+        self._cached_stack_scene_key: str = ""
 
     def render(self, context, cameras) -> None:
         """每帧由引擎调用。"""
@@ -80,9 +86,9 @@ class RenderStackPipeline(RenderPipeline):
             return None
 
         # Fast path: use cached scan result if structure hasn't changed
-        scene_id = id(scene)
+        scene_key = _scene_cache_key(scene)
         ver = scene.structure_version
-        if scene_id == self._cached_stack_scene_id and ver == self._cached_stack_version:
+        if scene_key == self._cached_stack_scene_key and ver == self._cached_stack_version:
             return self._cached_stack
 
         # Slow path: scan scene (only when structure changes)
@@ -97,7 +103,7 @@ class RenderStackPipeline(RenderPipeline):
 
         self._cached_stack = found
         self._cached_stack_version = ver
-        self._cached_stack_scene_id = scene_id
+        self._cached_stack_scene_key = scene_key
         return found
 
     def _render_fallback(self, context, camera) -> None:

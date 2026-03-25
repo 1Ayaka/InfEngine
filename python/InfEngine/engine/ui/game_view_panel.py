@@ -6,7 +6,6 @@ It displays what the player would see through the scene's main Camera component.
 """
 
 import os
-import gc as _gc
 import configparser
 from time import perf_counter as _pc
 from operator import attrgetter
@@ -86,11 +85,6 @@ class GameViewPanel(EditorPanel):
         self._fps_accum_frames = 0
         self._display_fps = 0.0
         self._display_frame_ms = 0.0
-
-        # Sub-profiling accumulators:
-        # [0]toolbar [1]get_tex [2]get_scene [3]canvas [4]imgui [5]screenUI
-        # [6]events [7]input [8]total [9]count [10]gc_hits
-        self._gv_profile: list[float] = [0.0] * 11
 
     def _set_game_render_active(self, active: bool) -> None:
         """Keep C++ game rendering in lockstep with actual panel visibility.
@@ -250,8 +244,6 @@ class GameViewPanel(EditorPanel):
             ctx.label(t("game_view.engine_not_init"))
             return
 
-        _t_start = _pc()  # full on_render_content timing
-
         # Ensure native Game rendering is enabled once the panel has rendered.
         # Do not disable it on transient dock/tab invisibility because scene
         # switches can temporarily interrupt panel visibility for a frame.
@@ -341,24 +333,14 @@ class GameViewPanel(EditorPanel):
             self._last_game_width = target_w
             self._last_game_height = target_h
 
-        _t0 = _pc()
-        _gc0 = _gc.get_count()
-
         game_texture_id = self._engine.get_game_texture_id()
-
-        _t0a = _pc()
 
         # Pre-fetch scene + canvases once (used by both render and events)
         _scene = _SM.instance().get_active_scene()
 
-        _t0b = _pc()
-
         _canvases = collect_sorted_canvases(_scene, allow_stale_empty=True) if _scene is not None else []
         if _canvases:
             clear_rect_cache(id(ctx))
-
-        _t1 = _pc()
-        _gc1 = _gc.get_count()
 
         # Re-sample the available region after the toolbar/FPS row has been laid
         # out. Using the earlier height here shifts the game image downward.
@@ -368,7 +350,6 @@ class GameViewPanel(EditorPanel):
         cursor_start_x = ctx.get_cursor_pos_x()
         cursor_start_y = ctx.get_cursor_pos_y()
 
-        _t_screen_ui = 0.0
         if game_texture_id != 0:
             pad_x = max(0.0, (avail_width - draw_w) * 0.5)
             pad_y = max(0.0, (avail_height - draw_h) * 0.5)
@@ -379,14 +360,12 @@ class GameViewPanel(EditorPanel):
             vp = capture_viewport_info(ctx)
             Input.set_game_viewport_origin(vp.image_min_x, vp.image_min_y)
 
-            _t2 = _pc()
             self._render_screen_ui(ctx, vp.image_min_x, vp.image_min_y,
                                    float(draw_w), float(draw_h),
                                    vp.image_min_x, vp.image_min_y,
                                    vp.image_min_x + float(draw_w),
                                    vp.image_min_y + float(draw_h),
                                    scene=_scene, canvases=_canvases)
-            _t_screen_ui = _pc() - _t2
 
         else:
             Input.set_game_viewport_origin(0.0, 0.0)
@@ -396,8 +375,6 @@ class GameViewPanel(EditorPanel):
             ctx.label("")
             ctx.label("  " + t("game_view.create_camera_hint_1"))
             ctx.label("  " + t("game_view.create_camera_hint_2"))
-
-        _t3 = _pc()
 
         game_hovered = ctx.is_window_hovered()
         is_playing = self._is_playing()
@@ -417,50 +394,10 @@ class GameViewPanel(EditorPanel):
         if not is_playing and cursor_locked:
             Input.set_cursor_locked(False)
 
-        _t_events = 0.0
         if is_playing and game_hovered:
-            _te0 = _pc()
             self._process_ui_events(target_w, target_h, canvases=_canvases)
-            _t_events = _pc() - _te0
         elif not is_playing:
             self._ui_event_processor.reset()
-
-        _t4 = _pc()
-
-        # Accumulate sub-timings for profiling output (120-frame rolling)
-        _gvp = self._gv_profile
-        _gvp[0] += (_t0 - _t_start)   # toolbar (resolution, scale, FPS)
-        _gvp[1] += (_t0a - _t0)       # get_game_texture_id
-        _gvp[2] += (_t0b - _t0a)      # get_active_scene
-        _gvp[3] += (_t1 - _t0b)       # collect_sorted_canvases
-        _gvp[4] += (_t3 - _t1) - _t_screen_ui  # imgui widgets
-        _gvp[5] += _t_screen_ui       # screen UI dispatch
-        _gvp[6] += _t_events          # UI events
-        _gvp[7] += (_t4 - _t3) - _t_events  # input/focus
-        _gvp[8] += (_t4 - _t_start)   # total on_render_content
-        _gvp[9] += 1                  # frame count
-        if _gc0 != _gc1:
-            _gvp[10] += 1            # GC triggered between _t0 and _t1
-        if _gvp[9] >= 120:
-            n = _gvp[9]
-            _n_canvases = len(_canvases) if _canvases else 0
-            _n_elems = sum(len(c._get_elements()) for c in _canvases) if _canvases else 0
-            from InfEngine.lib import inflog_warn
-            inflog_warn(
-                f"[GV sub-profile] avg{int(n)}  "
-                f"total={_gvp[8]/n*1000:.2f}ms  "
-                f"toolbar={_gvp[0]/n*1000:.2f}ms  "
-                f"get_tex={_gvp[1]/n*1000:.2f}ms  "
-                f"get_scene={_gvp[2]/n*1000:.2f}ms  "
-                f"canvas={_gvp[3]/n*1000:.2f}ms  "
-                f"imgui={_gvp[4]/n*1000:.2f}ms  "
-                f"screenUI={_gvp[5]/n*1000:.2f}ms  "
-                f"events={_gvp[6]/n*1000:.2f}ms  "
-                f"input={_gvp[7]/n*1000:.2f}ms  "
-                f"gc_hits={int(_gvp[10])}/{int(n)}  "
-                f"canvases={_n_canvases}  elems={_n_elems}"
-            )
-            _gvp[:] = [0.0] * 11
 
     # ------------------------------------------------------------------
     # Screen-space UI overlay

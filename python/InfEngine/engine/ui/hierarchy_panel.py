@@ -17,6 +17,12 @@ from .imgui_keys import (KEY_LEFT_CTRL, KEY_RIGHT_CTRL, KEY_LEFT_SHIFT,
                          KEY_ESCAPE, KEY_C, KEY_V, KEY_X)
 
 
+def _scene_cache_key(scene) -> str:
+    if scene is None:
+        return ""
+    return str(getattr(scene, "name", ""))
+
+
 @editor_panel("Hierarchy", type_id="hierarchy", title_key="panel.hierarchy")
 class HierarchyPanel(EditorPanel):
     """
@@ -59,7 +65,7 @@ class HierarchyPanel(EditorPanel):
         self._rename_focus: bool = False  # True on the first frame to auto-focus the input
         # Root objects cache — avoids re-creating 1024 pybind11 wrappers every frame.
         self._cached_root_objects = None
-        self._cached_scene_id: int = 0
+        self._cached_scene_key: str = ""
         self._cached_structure_version: int = -1
         self._last_root_refresh_time: float = 0.0
         # UI Mode: when True, show Canvas trees normally, dim others
@@ -88,7 +94,7 @@ class HierarchyPanel(EditorPanel):
         """Enter or exit UI Mode.  In UI Mode the hierarchy only shows Canvas trees."""
         self._ui_mode = bool(enabled)
         # Invalidate root-object cache so the filtered list is rebuilt.
-        self._cached_scene_id = 0
+        self._cached_scene_key = ""
         self._cached_structure_version = -1
         self._last_root_refresh_time = 0.0
         self._cached_ordered_ids = None
@@ -134,21 +140,21 @@ class HierarchyPanel(EditorPanel):
 
     def _get_root_objects_cached(self, scene, *, allow_stale: bool = False):
         """Return root objects, reusing a cached list when the scene structure hasn't changed."""
-        scene_id = id(scene)
+        scene_key = _scene_cache_key(scene)
         ver = scene.structure_version
         cached_roots = self._cached_root_objects
         can_reuse_stale = (
             allow_stale
-            and self._cached_scene_id == scene_id
+            and self._cached_scene_key == scene_key
             and cached_roots is not None
             and len(cached_roots) >= self._STALE_ROOT_REFRESH_ROOT_THRESHOLD
             and (time.perf_counter() - self._last_root_refresh_time) < self._STALE_ROOT_REFRESH_INTERVAL
         )
-        if scene_id != self._cached_scene_id or (ver != self._cached_structure_version and not can_reuse_stale):
+        if scene_key != self._cached_scene_key or (ver != self._cached_structure_version and not can_reuse_stale):
             self._cached_root_objects = scene.get_root_objects()
             self._cached_ordered_ids = None  # invalidate ordered IDs cache
             self._cached_canvas_roots = None  # invalidate canvas roots cache
-            self._cached_scene_id = scene_id
+            self._cached_scene_key = scene_key
             self._cached_structure_version = ver
             self._last_root_refresh_time = time.perf_counter()
         return self._cached_root_objects

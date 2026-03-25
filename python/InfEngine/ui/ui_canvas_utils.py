@@ -15,12 +15,18 @@ if TYPE_CHECKING:
 
 _sort_key = attrgetter('sort_order')
 
+
+def _scene_cache_key(scene) -> str:
+    if scene is None:
+        return ""
+    return str(getattr(scene, "name", ""))
+
 # ── Cached canvas collection ────────────────────────────────────────
 # Avoids a full DFS every frame; rebuilt only when scene structure changes.
 _canvas_cache: list = []
 _canvas_sorted_cache: list = []
 _canvas_with_go_cache: list = []
-_canvas_cache_scene_id: int = 0
+_canvas_cache_scene_key: str = ""
 _canvas_cache_version: int = -1
 _canvas_cache_rebuild_time: float = 0.0
 _EMPTY_CACHE_INITIAL_RETRY_INTERVAL = 0.25
@@ -30,7 +36,7 @@ _empty_cache_retry_interval: float = _EMPTY_CACHE_INITIAL_RETRY_INTERVAL
 
 def _rebuild_cache(scene) -> None:
     global _canvas_cache, _canvas_sorted_cache, _canvas_with_go_cache
-    global _canvas_cache_scene_id, _canvas_cache_version, _canvas_cache_rebuild_time
+    global _canvas_cache_scene_key, _canvas_cache_version, _canvas_cache_rebuild_time
     global _empty_cache_retry_interval
     from InfEngine.ui import UICanvas
 
@@ -50,7 +56,7 @@ def _rebuild_cache(scene) -> None:
     _canvas_with_go_cache = result
     _canvas_cache = [comp for _, comp in result]
     _canvas_sorted_cache = sorted(_canvas_cache, key=_sort_key)
-    _canvas_cache_scene_id = id(scene) if scene is not None else 0
+    _canvas_cache_scene_key = _scene_cache_key(scene)
     _canvas_cache_version = scene.structure_version if scene is not None else -1
     _canvas_cache_rebuild_time = time.perf_counter()
     if _canvas_cache:
@@ -62,13 +68,13 @@ def _rebuild_cache(scene) -> None:
 
 
 def _ensure_cache(scene, *, allow_stale_empty: bool = False) -> None:
-    global _canvas_cache_scene_id, _canvas_cache_version
+    global _canvas_cache_scene_key, _canvas_cache_version
     if scene is None:
         return
 
-    scene_id = id(scene)
+    scene_key = _scene_cache_key(scene)
     ver = scene.structure_version
-    if scene_id != _canvas_cache_scene_id:
+    if scene_key != _canvas_cache_scene_key:
         _rebuild_cache(scene)
         return
     if allow_stale_empty and not _canvas_cache:
@@ -81,9 +87,9 @@ def _ensure_cache(scene, *, allow_stale_empty: bool = False) -> None:
 
 def invalidate_canvas_cache() -> None:
     """Force cache invalidation (e.g. on scene load)."""
-    global _canvas_cache_scene_id, _canvas_cache_version, _canvas_cache_rebuild_time
+    global _canvas_cache_scene_key, _canvas_cache_version, _canvas_cache_rebuild_time
     global _empty_cache_retry_interval
-    _canvas_cache_scene_id = 0
+    _canvas_cache_scene_key = ""
     _canvas_cache_version = -1
     _canvas_cache_rebuild_time = 0.0
     _empty_cache_retry_interval = _EMPTY_CACHE_INITIAL_RETRY_INTERVAL
