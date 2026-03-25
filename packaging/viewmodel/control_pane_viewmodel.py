@@ -120,7 +120,12 @@ class ControlPaneViewModel:
 
         splash = EngineSplashScreen(ICON_PATH, project_name, parent=None)
         splash.show()
-        splash.launch(python_exe, script, project_path, detached=is_frozen())
+        splash.launch(
+            python_exe,
+            script,
+            project_path,
+            detached=is_frozen(),
+        )
         self._splash = splash
 
     def delete_project(self, parent):

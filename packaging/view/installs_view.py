@@ -139,7 +139,7 @@ class PythonRuntimeInstallDialog(QDialog):
         layout.addWidget(title)
 
         detail = QLabel(
-            "A background installer process is preparing a full Python 3.12 runtime and a reusable "
+            "A background setup process is preparing an embedded Python 3.12 runtime and a reusable "
             "venv template in InfEngineHubData. New projects can then clone that template directly. "
             "This window will close automatically when installation finishes."
         )
@@ -472,7 +472,7 @@ class InstallsView(QWidget):
         else:
             self._runtime_status.setText("Python 3.12 runtime is missing")
             self._runtime_path.setText(
-                "The installed Hub is expected to prepare a full Python 3.12 runtime during setup. If it is still missing, Hub will download the matching Python 3.12 installer for this machine and prepare a reusable venv template."
+                "The installed Hub is expected to prepare an embedded Python 3.12 runtime during setup. If it is still missing, Hub will download the matching embeddable Python package for this machine and prepare a reusable venv template."
             )
             self._runtime_button.setText("Install Python 3.12")
 

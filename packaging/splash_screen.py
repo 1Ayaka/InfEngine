@@ -217,7 +217,7 @@ class EngineSplashScreen(QWidget):
     # ── Process management ──
 
     def launch(self, python_exe: str, script: str, project_path: str,
-               *, detached: bool = True):
+               *, detached: bool = True, extra_env: dict[str, str] | None = None):
         """Start the engine process and poll a ready-file for progress.
 
         Args:
@@ -234,6 +234,8 @@ class EngineSplashScreen(QWidget):
         env["_INFENGINE_READY_FILE"] = self._ready_file
         env["_INFENGINE_PROJECT_LOCK_PATH"] = get_project_lock_path(project_path)
         env["_INFENGINE_PROJECT_LOCK_TOKEN"] = self._lock_token
+        if extra_env:
+            env.update(extra_env)
         write_project_lock(project_path, os.getpid(), self._lock_token, "editor", "launching")
 
         popen_kwargs: dict = {"cwd": project_path, "env": env}

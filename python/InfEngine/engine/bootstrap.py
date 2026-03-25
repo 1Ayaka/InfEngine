@@ -525,6 +525,7 @@ class EditorBootstrap:
         hierarchy = self.hierarchy
         scene_view = self.scene_view
         game_view = self.game_view
+        from InfEngine.engine.ui.closable_panel import ClosablePanel
 
         def on_ui_mode_request(enter: bool):
             hierarchy.set_ui_mode(enter)
@@ -544,6 +545,11 @@ class EditorBootstrap:
                 ui_editor.notify_hierarchy_selection(obj)
 
         hierarchy.set_on_selection_changed_ui_editor(on_hierarchy_ui_sync)
+
+        def on_panel_focus_changed(_old_panel_id: str, new_panel_id: str):
+            hierarchy.set_ui_mode(new_panel_id == ui_editor.window_id)
+
+        ClosablePanel.set_on_panel_focus_changed(on_panel_focus_changed)
 
         def exit_ui_mode():
             if hierarchy.ui_mode:

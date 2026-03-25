@@ -604,13 +604,21 @@ class BuildSettingsPanel:
     def _render_scene_section(self, ctx):
         ctx.label(t("build.scenes_in_build"))
 
+        from InfEngine.engine.scene_manager import SceneFileManager
+        sfm = SceneFileManager.instance()
+        can_add_open_scene = bool(sfm and sfm.current_scene_path)
+
         def _add_current():
-            from InfEngine.engine.scene_manager import SceneFileManager
-            sfm = SceneFileManager.instance()
             if sfm and sfm.current_scene_path:
                 self._add_scene(sfm.current_scene_path)
 
+        if not can_add_open_scene:
+            ctx.begin_disabled(True)
         ctx.button("  " + t("build.add_open_scene") + "  ", _add_current)
+        if not can_add_open_scene:
+            ctx.end_disabled()
+            if ctx.is_item_hovered():
+                ctx.set_tooltip("Please save the current scene before adding it to Build Settings.")
 
         remove_idx: Optional[int] = None
         swap_pair: Optional[tuple] = None

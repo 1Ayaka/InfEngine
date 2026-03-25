@@ -97,17 +97,18 @@ def _save_editor_settings(settings: dict):
 # File dialog — Win32 native (fast), with tkinter fallback
 # ---------------------------------------------------------------------------
 
-def _show_save_dialog(initial_dir: str, callback: Callable[[Optional[str]], None]):
+def _show_save_dialog(initial_dir: str, callback: Callable[[Optional[str]], None],
+                      default_filename: str = "Untitled Scene.scene"):
     """Show a native save-file dialog. *callback* receives the chosen path or None."""
     def _run():
-        result = _win32_save_dialog(initial_dir)
+        result = _win32_save_dialog(initial_dir, default_filename)
         callback(result)
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
 
 
-def _win32_save_dialog(initial_dir: str) -> Optional[str]:
+def _win32_save_dialog(initial_dir: str, default_filename: str = "Untitled Scene.scene") -> Optional[str]:
     """Use the Win32 GetSaveFileNameW API directly via ctypes.
     Much faster than tkinter which has to load the entire Tcl/Tk runtime."""
     import ctypes
@@ -145,7 +146,14 @@ def _win32_save_dialog(initial_dir: str) -> Optional[str]:
             ("FlagsEx",           wt.DWORD),
         ]
 
+    default_filename = (default_filename or "Untitled Scene.scene").strip() or "Untitled Scene.scene"
+    for ch in '<>:"/\\|?*':
+        default_filename = default_filename.replace(ch, '_')
+
+    default_target = os.path.join(initial_dir, default_filename)
+
     buf = ctypes.create_unicode_buffer(MAX_PATH)
+    buf.value = default_target
     ofn = OPENFILENAMEW()
     ofn.lStructSize    = ctypes.sizeof(OPENFILENAMEW)
     ofn.lpstrFilter    = "Scene files (*.scene)\0*.scene\0All files (*.*)\0*.*\0\0"
@@ -1260,7 +1268,11 @@ class SceneFileManager:
             else:
                 self._pending_save_path = None
 
-        _show_save_dialog(assets_dir, _on_result)
+        if self._current_scene_path:
+            default_filename = os.path.basename(self._current_scene_path)
+        else:
+            default_filename = f"{DEFAULT_SCENE_NAME}{SCENE_EXTENSION}"
+        _show_save_dialog(assets_dir, _on_result, default_filename)
 
     def _is_under_assets(self, path: str) -> bool:
         """Check if *path* is within the project's Assets/ directory."""

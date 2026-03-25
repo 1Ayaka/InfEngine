@@ -305,6 +305,7 @@ except Exception as _exc:
             product_name=self.project_name,
             icon_path=icon_path if os.path.isfile(icon_path) else None,
             extra_include_packages=user_packages or [],
+            extra_requirements_files=self._project_requirement_files(),
         )
 
         def _nk_progress(msg: str, pct: float):
@@ -314,6 +315,12 @@ except Exception as _exc:
                 on_progress(msg, mapped)
 
         return nk.build(on_progress=_nk_progress, cancel_event=cancel_event)
+
+    def _project_requirement_files(self) -> List[str]:
+        req_path = os.path.join(self.project_path, "requirements.txt")
+        if os.path.isfile(req_path):
+            return [req_path]
+        return []
 
     # ------------------------------------------------------------------
     # Organize output: move dist contents to the final output directory

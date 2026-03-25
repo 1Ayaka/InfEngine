@@ -24,11 +24,6 @@ from typing import Callable, List, Optional
 
 from InfEngine.debug import Debug
 
-try:
-    import winreg
-except ImportError:
-    winreg = None
-
 # ASCII-safe root for Nuitka staging and temporary build artifacts.
 _STAGING_ROOT = "C:\\_InfBuild"
 
@@ -106,40 +101,6 @@ def _is_valid_builder_python(python_exe: str) -> bool:
     )
 
 
-def _python_from_launcher() -> Optional[str]:
-    try:
-        completed = _run_python("py", ["-3.12", "-c", "import sys; print(sys.executable)"], timeout=20)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if completed.returncode != 0:
-        return None
-    values = (completed.stdout or "").strip().splitlines()
-    if not values:
-        return None
-    return values[-1].strip()
-
-
-def _registry_python_candidates() -> List[str]:
-    if winreg is None or sys.platform != "win32":
-        return []
-
-    candidates: list[str] = []
-    keys = [
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Python\PythonCore\3.12\InstallPath"),
-        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Python\PythonCore\3.12\InstallPath"),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Python\PythonCore\3.12\InstallPath"),
-    ]
-    for hive, subkey in keys:
-        try:
-            with winreg.OpenKey(hive, subkey) as key:
-                install_path, _ = winreg.QueryValueEx(key, None)
-        except OSError:
-            continue
-        if install_path:
-            candidates.append(os.path.join(install_path, "python.exe"))
-    return candidates
-
-
 def _dedupe_paths(paths: List[str]) -> List[str]:
     deduped: list[str] = []
     seen: set[str] = set()
@@ -154,67 +115,17 @@ def _dedupe_paths(paths: List[str]) -> List[str]:
     return deduped
 
 
-def _candidate_builder_pythons() -> List[str]:
-    candidates: list[str] = []
-
-    for env_name in ("INFENGINE_BUILDER_PYTHON", "INFENGINE_PYTHON312"):
-        env_value = os.environ.get(env_name)
-        if env_value:
-            candidates.append(env_value)
-
-    if sys.platform == "win32":
-        local_app_data = os.environ.get("LOCALAPPDATA", "")
-        if local_app_data:
-            candidates.extend([
-                os.path.join(local_app_data, "InfEngineHub", "runtime", "venv_template", "Scripts", "python.exe"),
-                os.path.join(local_app_data, "InfEngineHub", "runtime", "python312", "python.exe"),
-            ])
-
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        candidates.extend([
-            os.path.join(exe_dir, "InfEngineHubData", "runtime", "venv_template", "Scripts", "python.exe"),
-            os.path.join(exe_dir, "InfEngineHubData", "runtime", "python312", "python.exe"),
-        ])
-
-        repo_root = Path(__file__).resolve().parents[3]
-        candidates.extend([
-            str(repo_root / "packaging" / "InfEngineHubData" / "runtime" / "venv_template" / "Scripts" / "python.exe"),
-            str(repo_root / "packaging" / "InfEngineHubData" / "runtime" / "python312" / "python.exe"),
-        ])
-
-        candidates.extend(_registry_python_candidates())
-        for root in filter(None, [os.environ.get("ProgramFiles"), os.environ.get("LocalAppData")]):
-            if root == os.environ.get("LocalAppData"):
-                candidates.append(os.path.join(root, "Programs", "Python", "Python312", "python.exe"))
-            else:
-                candidates.append(os.path.join(root, "Python312", "python.exe"))
-
-        py_python = _python_from_launcher()
-        if py_python:
-            candidates.append(py_python)
-
-    return _dedupe_paths(candidates)
-
-
 def _resolve_builder_python() -> str:
+    explicit = os.environ.get("INFENGINE_BUILDER_PYTHON", "").strip()
+    if explicit and _is_valid_builder_python(explicit):
+        return explicit
+
     if _is_valid_builder_python(sys.executable):
         return sys.executable
 
-    for candidate in _candidate_builder_pythons():
-        if _is_valid_builder_python(candidate):
-            return candidate
-
-    if _python_version(sys.executable) == "3.12" and _is_embeddable_python_exe(sys.executable):
-        raise RuntimeError(
-            "Nuitka cannot compile with the Windows embeddable Python distribution.\n"
-            "InfEngine needs a full Python 3.12 runtime or the reusable builder venv template.\n"
-            "If you are using the standalone Hub, run the Python 3.12 bootstrap first so it prepares\n"
-            "LOCALAPPDATA\\InfEngineHub\\runtime\\venv_template, then build again."
-        )
-
     raise RuntimeError(
-        "Unable to locate a usable non-embeddable Python 3.12 interpreter for Nuitka builds.\n"
-        "Install Python 3.12 or prepare the InfEngine Hub runtime template, then try again."
+        "Nuitka builds must run from a non-embeddable Python 3.12 environment.\n"
+        "In the packaged Hub workflow, open the project through its generated .venv and build from there."
     )
 
 
@@ -244,6 +155,27 @@ def _ensure_python_packages(python_exe: str, *module_names: str) -> None:
     )
 
 
+def _install_requirements_files(python_exe: str, requirement_files: List[str]) -> None:
+    for requirement_file in requirement_files:
+        if not requirement_file or not os.path.isfile(requirement_file):
+            continue
+        Debug.log_internal(
+            f"Installing project requirements into builder Python: {requirement_file}"
+        )
+        subprocess.check_call(
+            [
+                python_exe,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "-r",
+                requirement_file,
+                "--quiet",
+            ],
+        )
+
+
 class NuitkaBuilder:
     """Wraps Nuitka compilation for InfEngine standalone builds."""
 
@@ -258,6 +190,7 @@ class NuitkaBuilder:
         icon_path: Optional[str] = None,
         extra_include_packages: Optional[List[str]] = None,
         extra_include_data: Optional[List[str]] = None,
+        extra_requirements_files: Optional[List[str]] = None,
         console_mode: str = "disable",
     ):
         self.entry_script = os.path.abspath(entry_script)
@@ -269,6 +202,11 @@ class NuitkaBuilder:
         self.console_mode = console_mode
         self.extra_include_packages = list(extra_include_packages or [])
         self.extra_include_data = list(extra_include_data or [])
+        self.extra_requirements_files = [
+            os.path.abspath(path)
+            for path in list(extra_requirements_files or [])
+            if path
+        ]
 
         # Staging directory — unique per build to allow parallel builds
         tag = hashlib.md5(self.output_dir.encode()).hexdigest()[:8]
@@ -327,14 +265,20 @@ class NuitkaBuilder:
     # ------------------------------------------------------------------
 
     def _check_nuitka(self):
-        """Ensure Nuitka is installed; auto-install if missing."""
+        """Ensure Nuitka and build-time project dependencies are installed."""
         try:
             _ensure_python_packages(self._builder_python, "nuitka", "ordered_set")
+            _install_requirements_files(
+                self._builder_python,
+                self.extra_requirements_files,
+            )
         except Exception as exc:
             raise RuntimeError(
-                "Failed to auto-install Nuitka.  "
+                "Failed to prepare the builder Python environment.  "
                 f"Builder Python: {self._builder_python}\n"
-                "Please run manually:\n    pip install nuitka ordered-set"
+                "Please run manually:\n"
+                "    pip install nuitka ordered-set\n"
+                "and install the project's requirements.txt if needed."
             ) from exc
 
     # ------------------------------------------------------------------
@@ -471,6 +415,22 @@ class NuitkaBuilder:
         os.makedirs(safe_tmp, exist_ok=True)
         env["TEMP"] = safe_tmp
         env["TMP"] = safe_tmp
+
+        safe_profile = os.path.join(self._staging_dir, "_profile")
+        safe_local_appdata = os.path.join(safe_profile, "AppData", "Local")
+        safe_roaming_appdata = os.path.join(safe_profile, "AppData", "Roaming")
+        for path in (safe_profile, safe_local_appdata, safe_roaming_appdata):
+            os.makedirs(path, exist_ok=True)
+
+        env["USERPROFILE"] = safe_profile
+        env["HOME"] = safe_profile
+        env["LOCALAPPDATA"] = safe_local_appdata
+        env["APPDATA"] = safe_roaming_appdata
+        if sys.platform == "win32":
+            drive, tail = os.path.splitdrive(safe_profile)
+            env["HOMEDRIVE"] = drive or "C:"
+            env["HOMEPATH"] = tail or "\\"
+
         # Use a persistent cache directory so Nuitka can reuse compiled C
         # code across builds — this is the single biggest speed win.
         os.makedirs(_NUITKA_CACHE_DIR, exist_ok=True)

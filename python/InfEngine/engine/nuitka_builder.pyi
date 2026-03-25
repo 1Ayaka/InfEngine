@@ -23,14 +23,17 @@ class NuitkaBuilder:
 
     def __init__(
         self,
-        boot_script: str,
-        project_path: str,
+        entry_script: str,
         output_dir: str,
-        on_progress: Optional[Callable[[str, float], None]] = None,
-        icon_path: Optional[str] = None,
-        company_name: str = ...,
+        *,
+        output_filename: str = ...,
         product_name: str = ...,
-        product_version: str = ...,
+        file_version: str = ...,
+        icon_path: Optional[str] = None,
+        extra_include_packages: Optional[List[str]] = None,
+        extra_include_data: Optional[List[str]] = None,
+        extra_requirements_files: Optional[List[str]] = None,
+        console_mode: str = ...,
     ) -> None: ...
 
     def build(self) -> str:

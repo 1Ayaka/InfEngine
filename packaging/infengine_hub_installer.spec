@@ -7,7 +7,6 @@ block_cipher = None
 _PACKAGING_DIR = os.path.dirname(os.path.abspath(SPEC))
 _ROOT_DIR = os.path.dirname(_PACKAGING_DIR)
 _PAYLOAD_DIR = os.path.join(_ROOT_DIR, "dist", "InfEngine Hub")
-_OPTIONAL_RUNTIME_DIR = os.path.join(_PACKAGING_DIR, "runtime")
 
 # Locate OpenSSL DLLs required by _ssl.pyd — PyInstaller often misses these in conda envs.
 import sys as _sys
@@ -31,13 +30,6 @@ def collect_tree(src_root: str, dest_root: str):
             datas.append((os.path.join(root, filename), target_dir))
     return datas
 
-
-def collect_optional_tree(src_root: str, dest_root: str):
-    if not os.path.isdir(src_root):
-        return []
-    return collect_tree(src_root, dest_root)
-
-
 a = Analysis(
     [os.path.join(_PACKAGING_DIR, "installer_gui.py")],
     pathex=[_PACKAGING_DIR],
@@ -46,7 +38,6 @@ a = Analysis(
         (os.path.join(_PACKAGING_DIR, "resources", "icon.png"), "resources"),
         (os.path.join(_PACKAGING_DIR, "resources", "PingFangTC-Regular.otf"), "resources"),
         *collect_tree(_PAYLOAD_DIR, "payload"),
-        *collect_optional_tree(_OPTIONAL_RUNTIME_DIR, os.path.join("payload", "InfEngineHubData", "runtime")),
     ],
     hiddenimports=[
         "installer",

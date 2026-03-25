@@ -4,8 +4,8 @@
  */
 
 // Jolt/Jolt.h MUST be the very first Jolt include in this TU
-#include <Jolt/Geometry/ConvexHullBuilder.h>
 #include <Jolt/Jolt.h>
+#include <Jolt/Geometry/ConvexHullBuilder.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>

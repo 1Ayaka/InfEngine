@@ -25,6 +25,14 @@ if sys.platform == "win32":
     import winreg
 
 
+def _is_ascii_only_path(path: str) -> bool:
+    try:
+        path.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _resource_dir() -> str:
     if getattr(sys, "frozen", False):
         return os.path.join(sys._MEIPASS, "resources")
@@ -170,7 +178,7 @@ class InstallerWindow(QWidget):
         self._worker: InstallWorker | None = None
 
         self.setWindowTitle("InfEngine Hub Installer")
-        self.setFixedSize(580, 280)
+        self.setFixedSize(600, 320)
 
         icon_path = os.path.join(_resource_dir(), "icon.png")
         if os.path.isfile(icon_path):
@@ -187,10 +195,12 @@ class InstallerWindow(QWidget):
         root.addWidget(title)
 
         intro = QLabel(
-            "This installer copies InfEngine Hub onto your machine, installs a full private Python 3.12 runtime, "
-            "and prepares a reusable venv template for future project creation."
+            "This installer copies InfEngine Hub onto your machine. During setup, it will download and prepare "
+            "an embedded Python 3.12 runtime for this user and build a reusable venv template for future project creation."
         )
         intro.setWordWrap(True)
+        intro.setMinimumHeight(56)
+        intro.setContentsMargins(0, 0, 0, 6)
         root.addWidget(intro)
 
         root.addWidget(QLabel("Install location"))
@@ -227,12 +237,29 @@ class InstallerWindow(QWidget):
     def _browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select installation directory", self.path_edit.text())
         if folder:
+            if not _is_ascii_only_path(folder):
+                QMessageBox.warning(
+                    self,
+                    "Unsupported Install Path",
+                    "InfEngine Hub must be installed to an ASCII-only path.\n\n"
+                    "Please choose a directory without Chinese or other non-ASCII characters.",
+                )
+                return
             self.path_edit.setText(folder)
 
     def _start_install(self) -> None:
         install_dir = os.path.abspath(self.path_edit.text().strip())
         if not install_dir:
             QMessageBox.warning(self, "Missing Directory", "Please select an installation directory.")
+            return
+
+        if not _is_ascii_only_path(install_dir):
+            QMessageBox.warning(
+                self,
+                "Unsupported Install Path",
+                "InfEngine Hub must be installed to an ASCII-only path.\n\n"
+                "Please choose a directory without Chinese or other non-ASCII characters.",
+            )
             return
 
         if os.path.exists(install_dir) and os.listdir(install_dir):

@@ -14,8 +14,6 @@ import sys
 block_cipher = None
 
 _PACKAGING_DIR = os.path.dirname(os.path.abspath(SPEC))
-_OPTIONAL_RUNTIME_DIR = os.path.join(_PACKAGING_DIR, "runtime")
-
 # Locate OpenSSL DLLs required by _ssl.pyd — PyInstaller often misses these in conda envs.
 import sys as _sys
 _env_lib_bin = os.path.join(os.path.dirname(_sys.executable), "Library", "bin")
@@ -24,23 +22,6 @@ for _dll_name in ("libssl-3-x64.dll", "libcrypto-3-x64.dll", "libssl-3.dll", "li
     _p = os.path.join(_env_lib_bin, _dll_name)
     if os.path.isfile(_p):
         _ssl_binaries.append((_p, "."))
-
-
-def collect_tree(src_root: str, dest_root: str):
-    datas = []
-    for root, _dirs, files in os.walk(src_root):
-        rel_dir = os.path.relpath(root, src_root)
-        target_dir = dest_root if rel_dir == "." else os.path.join(dest_root, rel_dir)
-        for filename in files:
-            datas.append((os.path.join(root, filename), target_dir))
-    return datas
-
-
-def collect_optional_tree(src_root: str, dest_root: str):
-    if not os.path.isdir(src_root):
-        return []
-    return collect_tree(src_root, dest_root)
-
 a = Analysis(
     [os.path.join(_PACKAGING_DIR, "launcher.py")],
     pathex=[_PACKAGING_DIR],
@@ -48,7 +29,6 @@ a = Analysis(
     datas=[
         (os.path.join(_PACKAGING_DIR, "resources", "icon.png"), "resources"),
         (os.path.join(_PACKAGING_DIR, "resources", "PingFangTC-Regular.otf"), "resources"),
-        *collect_optional_tree(_OPTIONAL_RUNTIME_DIR, os.path.join("InfEngineHubData", "runtime")),
     ],
     hiddenimports=[
         "hub_resources",
