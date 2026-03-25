@@ -14,6 +14,20 @@ import sys
 block_cipher = None
 
 _PACKAGING_DIR = os.path.dirname(os.path.abspath(SPEC))
+
+
+def collect_tree(src_root, dest_root):
+    datas = []
+    for root, _dirs, files in os.walk(src_root):
+        rel_dir = os.path.relpath(root, src_root)
+        target_dir = dest_root if rel_dir == "." else os.path.join(dest_root, rel_dir)
+        for filename in files:
+            datas.append((os.path.join(root, filename), target_dir))
+    return datas
+
+
+_RUNTIME_PAYLOAD = os.path.join(_PACKAGING_DIR, "runtime")
+_RUNTIME_BUNDLE = os.path.join(_RUNTIME_PAYLOAD, "runtime_bundle.zip")
 # Locate OpenSSL DLLs required by _ssl.pyd — PyInstaller often misses these in conda envs.
 import sys as _sys
 _env_lib_bin = os.path.join(os.path.dirname(_sys.executable), "Library", "bin")
@@ -29,6 +43,7 @@ a = Analysis(
     datas=[
         (os.path.join(_PACKAGING_DIR, "resources", "icon.png"), "resources"),
         (os.path.join(_PACKAGING_DIR, "resources", "PingFangTC-Regular.otf"), "resources"),
+        (_RUNTIME_BUNDLE, "InfEngineHubData/runtime"),
     ],
     hiddenimports=[
         "hub_resources",

@@ -23,9 +23,9 @@ def _show_message_box(title: str, message: str, icon: int = 0x40) -> None:
 
 
 def install_runtime_for_app(app_dir: str, progress_callback=None) -> str:
-    runtime_dir = os.path.join(app_dir, "InfEngineHubData", "runtime")
-    manager = PythonRuntimeManager(runtime_dir=runtime_dir)
-    return manager.ensure_runtime(on_status=progress_callback)
+    bundle_runtime_dir = os.path.join(app_dir, "InfEngineHubData", "runtime")
+    manager = PythonRuntimeManager(bundle_runtime_dir=bundle_runtime_dir)
+    return manager.ensure_runtime(on_status=progress_callback, allow_frozen_repair=True)
 
 
 def main() -> int:

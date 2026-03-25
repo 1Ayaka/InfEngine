@@ -17,6 +17,7 @@ from hub_utils import get_bundle_dir, get_hub_data_dir, is_frozen
 
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _RUNTIME_ROOT = Path.home() / ".infengine" / "runtime"
+_PUBLIC_RUNTIME_ROOT = Path("C:/Users/Public/InfEngineHub") if sys.platform == "win32" else _RUNTIME_ROOT
 _TEMPLATE_BUILDER_PACKAGES = [
     "nuitka",
     "ordered-set",
@@ -33,13 +34,21 @@ _RUNTIME_PACKAGES = [
 ]
 
 
+def _runtime_lib_names() -> list[str]:
+    return ["python312.lib", "python3.lib"]
+
+
+def _runtime_bundle_name() -> str:
+    return "runtime_bundle.zip"
+
+
 class PythonRuntimeError(RuntimeError):
     pass
 
 
 def _default_runtime_dir() -> str:
     if is_frozen():
-        return os.path.join(get_hub_data_dir(), "runtime")
+        return str(_PUBLIC_RUNTIME_ROOT)
 
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
@@ -59,26 +68,26 @@ def _emit_status(callback: Optional[Callable[[str], None]], message: str) -> Non
         callback(message)
 
 
-def _runtime_embed_info_for_machine() -> tuple[str, str]:
+def _runtime_installer_info_for_machine() -> tuple[str, str]:
     machine = (platform.machine() or os.environ.get("PROCESSOR_ARCHITECTURE") or "").lower()
     if machine in {"amd64", "x86_64"}:
         return (
-            "python-3.12.8-embed-amd64.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
+            "python-3.12.8-amd64.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
         )
     if machine in {"arm64", "aarch64"}:
         return (
-            "python-3.12.8-embed-arm64.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-arm64.zip",
+            "python-3.12.8-arm64.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-arm64.exe",
         )
     if machine in {"x86", "i386", "i686"}:
         return (
-            "python-3.12.8-embed-win32.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-win32.zip",
+            "python-3.12.8.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8.exe",
         )
     return (
-        "python-3.12.8-embed-amd64.zip",
-        "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
+        "python-3.12.8-amd64.exe",
+        "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
     )
 
 
@@ -218,6 +227,70 @@ def _site_packages_root(runtime_root: str) -> str:
     return path
 
 
+def _has_build_support(root: str) -> bool:
+    include_dir = os.path.join(root, "include")
+    libs_dir = os.path.join(root, "libs")
+    if not os.path.isfile(os.path.join(include_dir, "Python.h")):
+        return False
+    return any(os.path.isfile(os.path.join(libs_dir, name)) for name in _runtime_lib_names())
+
+
+def _copy_tree(src: str, dest: str) -> None:
+    shutil.rmtree(dest, ignore_errors=True)
+    shutil.copytree(src, dest)
+
+
+def _copy_runtime_payload(src_root: str, dest_root: str, *, overwrite: bool) -> None:
+    os.makedirs(dest_root, exist_ok=True)
+    for name in os.listdir(src_root):
+        source_path = os.path.join(src_root, name)
+        target_path = os.path.join(dest_root, name)
+        if os.path.isdir(source_path):
+            if overwrite:
+                shutil.rmtree(target_path, ignore_errors=True)
+            if os.path.exists(target_path):
+                continue
+            shutil.copytree(source_path, target_path)
+        else:
+            if not overwrite and os.path.exists(target_path):
+                continue
+            shutil.copy2(source_path, target_path)
+
+
+def _copy_directory_contents(src_root: str, dest_root: str) -> None:
+    os.makedirs(dest_root, exist_ok=True)
+    for name in os.listdir(src_root):
+        source_path = os.path.join(src_root, name)
+        target_path = os.path.join(dest_root, name)
+        if os.path.isdir(source_path):
+            shutil.rmtree(target_path, ignore_errors=True)
+            shutil.copytree(source_path, target_path)
+        else:
+            shutil.copy2(source_path, target_path)
+
+
+def _copy_build_support(src_root: str, dest_root: str) -> bool:
+    include_src = os.path.join(src_root, "include")
+    libs_src = os.path.join(src_root, "libs")
+    if not os.path.isfile(os.path.join(include_src, "Python.h")):
+        return False
+
+    copied_lib = False
+    os.makedirs(os.path.join(dest_root, "libs"), exist_ok=True)
+    for name in _runtime_lib_names():
+        source_path = os.path.join(libs_src, name)
+        if not os.path.isfile(source_path):
+            continue
+        shutil.copy2(source_path, os.path.join(dest_root, "libs", name))
+        copied_lib = True
+
+    if not copied_lib:
+        return False
+
+    _copy_tree(include_src, os.path.join(dest_root, "include"))
+    return True
+
+
 def _download_file(url: str, dest: str, *, user_agent: str, timeout: int = 120) -> None:
     req = urllib.request.Request(url)
     req.add_header("User-Agent", user_agent)
@@ -226,18 +299,28 @@ def _download_file(url: str, dest: str, *, user_agent: str, timeout: int = 120) 
 
 
 class PythonRuntimeManager:
-    def __init__(self, runtime_dir: Optional[str] = None) -> None:
+    def __init__(self, runtime_dir: Optional[str] = None, bundle_runtime_dir: Optional[str] = None) -> None:
         _RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
         self._runtime_dir = os.path.abspath(runtime_dir) if runtime_dir else _default_runtime_dir()
+        self._bundle_runtime_dir = os.path.abspath(bundle_runtime_dir) if bundle_runtime_dir else ""
 
     def installed_runtime_dir(self) -> str:
         return self._runtime_dir
 
     def bundled_runtime_dirs(self) -> list[str]:
-        dirs = [
+        dirs = []
+        if self._bundle_runtime_dir:
+            dirs.append(self._bundle_runtime_dir)
+        dirs.extend([
             os.path.join(get_bundle_dir(), "InfEngineHubData", "runtime"),
             os.path.join(get_bundle_dir(), "runtime"),
-        ]
+            os.path.join(get_bundle_dir(), "_internal", "InfEngineHubData", "runtime"),
+            os.path.join(get_bundle_dir(), "_internal", "runtime"),
+            os.path.join(get_bundle_dir(), "payload", "InfEngineHubData", "runtime"),
+            os.path.join(get_bundle_dir(), "payload", "runtime"),
+            os.path.join(get_bundle_dir(), "payload", "_internal", "InfEngineHubData", "runtime"),
+            os.path.join(get_bundle_dir(), "payload", "_internal", "runtime"),
+        ])
         result: list[str] = []
         seen: set[str] = set()
         for path in dirs:
@@ -256,13 +339,17 @@ class PythonRuntimeManager:
             return os.path.join(self.private_runtime_root(), "python.exe")
         return os.path.join(self.private_runtime_root(), "bin", "python")
 
-    def runtime_archive_path(self) -> str:
-        archive_name, _archive_url = _runtime_embed_info_for_machine()
-        return os.path.join(self.installed_runtime_dir(), archive_name)
+    def runtime_installer_path(self) -> str:
+        installer_name, _installer_url = _runtime_installer_info_for_machine()
+        return os.path.join(self.installed_runtime_dir(), installer_name)
 
-    def bundled_archive_paths(self) -> list[str]:
-        archive_name, _archive_url = _runtime_embed_info_for_machine()
-        return [os.path.join(path, archive_name) for path in self.bundled_runtime_dirs()]
+    def bundled_installer_paths(self) -> list[str]:
+        installer_name, _installer_url = _runtime_installer_info_for_machine()
+        return [os.path.join(path, installer_name) for path in self.bundled_runtime_dirs()]
+
+    def bundled_runtime_bundle_paths(self) -> list[str]:
+        bundle_name = _runtime_bundle_name()
+        return [os.path.join(path, bundle_name) for path in self.bundled_runtime_dirs()]
 
     def venv_template_root(self) -> str:
         return os.path.join(self.installed_runtime_dir(), "venv_template")
@@ -291,35 +378,51 @@ class PythonRuntimeManager:
             roots.append(os.path.join(_legacy_runtime_dir(), "python312"))
         for root in roots:
             candidate = _find_python_in_root(root)
-            if candidate and _is_python312(candidate):
+            if candidate and _is_python312(candidate) and not _is_embedded_root(root):
                 return candidate
         return None
 
-    def ensure_runtime(self, *, on_status: Optional[Callable[[str], None]] = None) -> str:
+    def ensure_runtime(
+        self,
+        *,
+        on_status: Optional[Callable[[str], None]] = None,
+        allow_frozen_repair: bool = False,
+    ) -> str:
         python_exe = self.get_runtime_path()
         if not python_exe:
-            python_exe = self._provision_embedded_runtime(on_status=on_status)
+            python_exe = self._provision_managed_runtime(on_status=on_status)
         else:
             runtime_root = os.path.dirname(python_exe)
-            if is_frozen():
-                if _is_embedded_root(runtime_root) and not _embedded_runtime_has_site_enabled(runtime_root):
+            if is_frozen() and not allow_frozen_repair:
+                if not _has_build_support(runtime_root):
                     raise PythonRuntimeError(
-                        "The installed embedded Python runtime is incomplete.\n"
+                        "The installed managed Python 3.12 runtime is missing CPython build support files.\n"
                         "Please reinstall InfEngine Hub so the runtime can be prepared during installation."
                     )
                 if not self._has_modules(python_exe, "pip", "virtualenv", "nuitka", "PIL", "imageio", "av"):
                     raise PythonRuntimeError(
-                        "The installed embedded Python runtime is missing required support packages.\n"
+                        "The installed managed Python 3.12 runtime is missing required support packages.\n"
                         "Please reinstall InfEngine Hub so the runtime can be prepared during installation."
                     )
                 if not self.has_venv_template():
                     raise PythonRuntimeError(
-                        "The installed embedded Python runtime is missing the reusable venv template.\n"
+                        "The installed managed Python 3.12 runtime is missing the reusable venv template.\n"
                         "Please reinstall InfEngine Hub so the runtime can be prepared during installation."
                     )
                 return python_exe
 
-            self._prepare_embedded_runtime(python_exe, on_status=on_status)
+            if allow_frozen_repair:
+                repaired_python = self._seed_runtime_from_bundle(overwrite=True, on_status=on_status)
+                if not repaired_python:
+                    repaired_python = self._install_runtime_to_root(
+                        self.private_runtime_root(),
+                        overwrite=True,
+                        on_status=on_status,
+                    )
+                if repaired_python:
+                    python_exe = repaired_python
+
+            self._prepare_managed_runtime(python_exe, on_status=on_status)
 
         self._ensure_venv_template(python_exe, on_status=on_status)
         return python_exe
@@ -337,6 +440,7 @@ class PythonRuntimeManager:
             ) from exc
 
         self._rewrite_pyvenv_cfg(venv_path, python_exe)
+        self._seed_venv_build_support(venv_path, os.path.dirname(python_exe))
 
         if sys.platform == "win32":
             venv_python = os.path.join(venv_path, "Scripts", "python.exe")
@@ -349,67 +453,143 @@ class PythonRuntimeManager:
             )
         return venv_python
 
-    def _provision_embedded_runtime(self, *, on_status: Optional[Callable[[str], None]] = None) -> str:
-        runtime_root = self.private_runtime_root()
-        archive_path = self._ensure_runtime_archive(on_status=on_status)
+    def _provision_managed_runtime(self, *, on_status: Optional[Callable[[str], None]] = None) -> str:
+        bundled_python = self._seed_runtime_from_bundle(on_status=on_status)
+        if bundled_python:
+            self._prepare_managed_runtime(bundled_python, on_status=on_status)
+            return bundled_python
 
-        _emit_status(on_status, "Preparing embedded Python 3.12 runtime...")
-        with tempfile.TemporaryDirectory(prefix="infengine-runtime-") as temp_dir:
-            extract_root = os.path.join(temp_dir, "python312")
-            os.makedirs(extract_root, exist_ok=True)
-            with zipfile.ZipFile(archive_path, "r") as zf:
-                zf.extractall(extract_root)
-
-            shutil.rmtree(runtime_root, ignore_errors=True)
-            shutil.copytree(extract_root, runtime_root)
-
-        python_exe = _find_python_in_root(runtime_root)
-        if not python_exe or not _is_python312(python_exe):
-            raise PythonRuntimeError(
-                "Embedded Python 3.12 was extracted, but python.exe was not detected afterwards."
-            )
-
-        self._prepare_embedded_runtime(python_exe, on_status=on_status)
+        python_exe = self._install_runtime_to_root(self.private_runtime_root(), overwrite=True, on_status=on_status)
+        self._prepare_managed_runtime(python_exe, on_status=on_status)
         return python_exe
 
-    def _prepare_embedded_runtime(self, python_exe: str, *, on_status: Optional[Callable[[str], None]] = None) -> None:
+    def _seed_runtime_from_bundle(
+        self,
+        *,
+        overwrite: bool = False,
+        on_status: Optional[Callable[[str], None]] = None,
+    ) -> Optional[str]:
+        target_root = self.installed_runtime_dir()
+        target_python = self.private_runtime_python()
+
+        for source_root in self.bundled_runtime_dirs():
+            bundled_python = _find_python_in_root(os.path.join(source_root, "python312"))
+            if not bundled_python or not _is_python312(bundled_python):
+                continue
+            if _is_embedded_root(os.path.dirname(bundled_python)):
+                continue
+            if os.path.normcase(os.path.abspath(source_root)) == os.path.normcase(os.path.abspath(target_root)):
+                return bundled_python
+
+            _emit_status(on_status, "Copying bundled Python 3.12 runtime...")
+            _copy_runtime_payload(source_root, target_root, overwrite=overwrite)
+            if os.path.isfile(target_python) and _is_python312(target_python) and not _is_embedded_root(os.path.dirname(target_python)):
+                return target_python
+
+        for bundle_path in self.bundled_runtime_bundle_paths():
+            if not os.path.isfile(bundle_path):
+                continue
+            _emit_status(on_status, "Extracting bundled Python 3.12 runtime...")
+            if overwrite:
+                shutil.rmtree(target_root, ignore_errors=True)
+            os.makedirs(target_root, exist_ok=True)
+            with zipfile.ZipFile(bundle_path, "r") as zf:
+                zf.extractall(target_root)
+            if os.path.isfile(target_python) and _is_python312(target_python) and not _is_embedded_root(os.path.dirname(target_python)):
+                return target_python
+        return None
+
+    def _prepare_managed_runtime(self, python_exe: str, *, on_status: Optional[Callable[[str], None]] = None) -> None:
         runtime_root = os.path.dirname(python_exe)
-        _enable_site_for_embedded_runtime(runtime_root)
+        if _is_embedded_root(runtime_root):
+            raise PythonRuntimeError(
+                "InfEngine Hub requires a full Python 3.12 runtime for Nuitka builds, but an embeddable runtime was detected."
+            )
+        self._ensure_runtime_build_support(runtime_root, on_status=on_status)
         self._ensure_pip(python_exe, on_status=on_status)
         self._ensure_runtime_packages(python_exe, on_status=on_status)
 
-    def _ensure_runtime_archive(self, *, on_status: Optional[Callable[[str], None]] = None) -> str:
-        archive_path = self.runtime_archive_path()
-        _archive_name, archive_url = _runtime_embed_info_for_machine()
+    def _ensure_runtime_installer(self, *, on_status: Optional[Callable[[str], None]] = None) -> str:
+        installer_path = self.runtime_installer_path()
+        _installer_name, installer_url = _runtime_installer_info_for_machine()
         os.makedirs(self.installed_runtime_dir(), exist_ok=True)
 
-        if os.path.isfile(archive_path):
-            return archive_path
+        if os.path.isfile(installer_path):
+            return installer_path
 
-        for candidate in self.bundled_archive_paths():
+        for candidate in self.bundled_installer_paths():
             if os.path.isfile(candidate):
-                shutil.copy2(candidate, archive_path)
-                return archive_path
+                shutil.copy2(candidate, installer_path)
+                return installer_path
 
-        _emit_status(on_status, f"Downloading embedded Python 3.12 for {platform.machine()}...")
-        tmp_path = archive_path + ".tmp"
+        _emit_status(on_status, f"Downloading Python 3.12 installer for {platform.machine()}...")
+        tmp_path = installer_path + ".tmp"
         try:
             _download_file(
-                archive_url,
+                installer_url,
                 tmp_path,
                 user_agent="InfEngine-Hub/1.0",
             )
         except urllib.error.URLError as exc:
             if "unknown url type: https" in str(exc).lower():
                 raise PythonRuntimeError(
-                    "Failed to download embedded Python 3.12 because HTTPS support is unavailable in the packaged Hub."
+                    "Failed to download the Python 3.12 installer because HTTPS support is unavailable in the packaged Hub."
                 ) from exc
-            raise PythonRuntimeError(f"Failed to download embedded Python 3.12.\n{exc}") from exc
+            raise PythonRuntimeError(f"Failed to download the Python 3.12 installer.\n{exc}") from exc
         except OSError as exc:
-            raise PythonRuntimeError(f"Failed to download embedded Python 3.12.\n{exc}") from exc
+            raise PythonRuntimeError(f"Failed to download the Python 3.12 installer.\n{exc}") from exc
 
-        os.replace(tmp_path, archive_path)
-        return archive_path
+        os.replace(tmp_path, installer_path)
+        return installer_path
+
+    def _install_runtime_to_root(
+        self,
+        runtime_root: str,
+        *,
+        overwrite: bool = False,
+        on_status: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        if sys.platform != "win32":
+            raise PythonRuntimeError("InfEngine Hub currently supports managed Python installation on Windows only.")
+
+        if overwrite:
+            shutil.rmtree(runtime_root, ignore_errors=True)
+
+        installer_path = self._ensure_runtime_installer(on_status=on_status)
+        os.makedirs(os.path.dirname(runtime_root), exist_ok=True)
+        _emit_status(on_status, "Installing managed Python 3.12 runtime...")
+        completed = _run_command(
+            [
+                installer_path,
+                "/quiet",
+                "InstallAllUsers=0",
+                f"TargetDir={runtime_root}",
+                "AssociateFiles=0",
+                "PrependPath=0",
+                "Shortcuts=0",
+                "CompileAll=0",
+                "Include_test=0",
+                "Include_launcher=0",
+                "InstallLauncherAllUsers=0",
+                "Include_pip=1",
+                "Include_dev=1",
+                "Include_venv=1",
+            ],
+            timeout=3600,
+            raise_on_error=False,
+        )
+        if completed.returncode != 0:
+            raise PythonRuntimeError(
+                "Failed to install the managed Python 3.12 runtime.\n"
+                f"{(completed.stderr or completed.stdout or '').strip()}"
+            )
+
+        python_exe = _find_python_in_root(runtime_root)
+        if not python_exe or not _is_python312(python_exe) or _is_embedded_root(runtime_root):
+            raise PythonRuntimeError(
+                "Python 3.12 installation completed, but a valid full python.exe was not found afterwards."
+            )
+        return python_exe
 
     def _get_pip_script_path(self, *, on_status: Optional[Callable[[str], None]] = None) -> str:
         target_path = os.path.join(self.installed_runtime_dir(), "get-pip.py")
@@ -435,26 +615,73 @@ class PythonRuntimeManager:
             raise PythonRuntimeError(f"Failed to download get-pip.py.\n{exc}") from exc
         return target_path
 
-    def _wheelhouse_dirs(self) -> list[str]:
-        candidates = [
-            os.path.join(self.installed_runtime_dir(), "wheels"),
-            str(_RUNTIME_ROOT / "wheels"),
-        ]
-        if not is_frozen():
-            candidates.insert(1, os.path.join(_legacy_runtime_dir(), "wheels"))
-        for root in self.bundled_runtime_dirs():
-            candidates.append(os.path.join(root, "wheels"))
+    def _bundled_python_roots(self) -> list[str]:
         result: list[str] = []
         seen: set[str] = set()
-        for path in candidates:
-            if not path or not os.path.isdir(path):
+        for root in self.bundled_runtime_dirs():
+            candidate = os.path.join(root, "python312")
+            if not os.path.isdir(candidate):
                 continue
-            norm = os.path.normcase(os.path.abspath(path))
+            norm = os.path.normcase(os.path.abspath(candidate))
             if norm in seen:
                 continue
             seen.add(norm)
-            result.append(path)
+            result.append(candidate)
         return result
+
+    def _build_support_source_roots(self) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+
+        for root in self._bundled_python_roots():
+            norm = os.path.normcase(os.path.abspath(root))
+            if norm in seen:
+                continue
+            seen.add(norm)
+            result.append(root)
+
+        if not is_frozen():
+            dev_root = sys.base_prefix or os.path.dirname(sys.executable)
+            if dev_root and os.path.isdir(dev_root):
+                norm = os.path.normcase(os.path.abspath(dev_root))
+                if norm not in seen:
+                    seen.add(norm)
+                    result.append(dev_root)
+
+        return result
+
+    def _ensure_runtime_build_support(
+        self,
+        runtime_root: str,
+        *,
+        on_status: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        if _has_build_support(runtime_root):
+            return
+
+        _emit_status(on_status, "Preparing CPython build support files...")
+        for source_root in self._build_support_source_roots():
+            if os.path.normcase(os.path.abspath(source_root)) == os.path.normcase(os.path.abspath(runtime_root)):
+                continue
+            if _copy_build_support(source_root, runtime_root) and _has_build_support(runtime_root):
+                return
+
+        raise PythonRuntimeError(
+            "Managed Python 3.12 is missing CPython build support files (Python.h / python312.lib).\n"
+            "Reinstall InfEngine Hub or rebuild the bundled runtime so these files are available."
+        )
+
+    def _seed_venv_build_support(self, venv_root: str, runtime_root: str) -> None:
+        if _has_build_support(venv_root):
+            return
+        if not _has_build_support(runtime_root):
+            raise PythonRuntimeError(
+                "Managed Python 3.12 is missing CPython build support files required for Nuitka builds."
+            )
+        if not _copy_build_support(runtime_root, venv_root) or not _has_build_support(venv_root):
+            raise PythonRuntimeError(
+                f"Failed to copy CPython build support files into the project virtual environment at {venv_root}."
+            )
 
     def _ensure_pip(self, python_exe: str, *, on_status: Optional[Callable[[str], None]] = None) -> None:
         completed = _run_command([python_exe, "-m", "pip", "--version"], timeout=60, raise_on_error=False)
@@ -462,7 +689,7 @@ class PythonRuntimeManager:
             return
 
         get_pip_path = self._get_pip_script_path(on_status=on_status)
-        _emit_status(on_status, "Installing pip into the embedded runtime...")
+        _emit_status(on_status, "Installing pip into the managed Python runtime...")
         completed = _run_command(
             [python_exe, get_pip_path, "--no-warn-script-location"],
             timeout=1800,
@@ -470,7 +697,7 @@ class PythonRuntimeManager:
         )
         if completed.returncode != 0:
             raise PythonRuntimeError(
-                "Failed to install pip into the embedded Python runtime.\n"
+                "Failed to install pip into the managed Python runtime.\n"
                 f"{(completed.stderr or completed.stdout or '').strip()}"
             )
 
@@ -478,7 +705,7 @@ class PythonRuntimeManager:
         if self._has_modules(python_exe, "pip", "virtualenv", "nuitka", "PIL", "imageio", "av"):
             return
 
-        _emit_status(on_status, "Installing embedded runtime support packages...")
+        _emit_status(on_status, "Installing managed runtime support packages...")
         args = [
             python_exe,
             "-m",
@@ -491,23 +718,17 @@ class PythonRuntimeManager:
             "--target",
             _site_packages_root(os.path.dirname(python_exe)),
         ]
-        wheelhouse_dirs = self._wheelhouse_dirs()
-        if wheelhouse_dirs:
-            args.append("--no-index")
-            for wheelhouse in wheelhouse_dirs:
-                args.extend(["--find-links", wheelhouse])
-
         args.extend(_RUNTIME_PACKAGES)
         completed = _run_command(args, timeout=1800, raise_on_error=False)
         if completed.returncode != 0:
             raise PythonRuntimeError(
-                "Failed to install support packages into the embedded Python runtime.\n"
+                "Failed to install support packages into the managed Python runtime.\n"
                 f"{(completed.stderr or completed.stdout or '').strip()}"
             )
 
         if not self._has_modules(python_exe, "pip", "virtualenv", "nuitka", "PIL", "imageio", "av"):
             raise PythonRuntimeError(
-                "Embedded Python runtime is still missing required support packages after installation."
+                "Managed Python runtime is still missing required support packages after installation."
             )
 
     def _has_modules(self, python_exe: str, *module_names: str) -> bool:
@@ -545,40 +766,31 @@ class PythonRuntimeManager:
             f"{last_error}"
         )
 
-    def _install_template_packages(self, venv_root: str, *, on_status: Optional[Callable[[str], None]] = None) -> None:
+    def _install_template_packages(
+        self,
+        venv_root: str,
+        runtime_root: str,
+        *,
+        on_status: Optional[Callable[[str], None]] = None,
+    ) -> None:
         if sys.platform == "win32":
             venv_python = os.path.join(venv_root, "Scripts", "python.exe")
+            venv_site_packages = os.path.join(venv_root, "Lib", "site-packages")
         else:
             venv_python = os.path.join(venv_root, "bin", "python")
+            version = self._get_python_version(venv_python)
+            major_minor = ".".join(version.split(".")[:2])
+            venv_site_packages = os.path.join(venv_root, "lib", f"python{major_minor}", "site-packages")
+
+        runtime_site_packages = _site_packages_root(runtime_root)
 
         if not os.path.isfile(venv_python):
             raise PythonRuntimeError(
                 f"Virtual environment template python was not found at {venv_python}."
             )
 
-        _emit_status(on_status, "Installing build packages into the reusable venv template...")
-        args = [
-            venv_python,
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-input",
-            "--prefer-binary",
-        ]
-        wheelhouse_dirs = self._wheelhouse_dirs()
-        if wheelhouse_dirs:
-            args.append("--no-index")
-            for wheelhouse in wheelhouse_dirs:
-                args.extend(["--find-links", wheelhouse])
-
-        args.extend(_TEMPLATE_BUILDER_PACKAGES)
-        completed = _run_command(args, timeout=1800, raise_on_error=False)
-        if completed.returncode != 0:
-            raise PythonRuntimeError(
-                "Failed to install build support packages into the reusable venv template.\n"
-                f"{(completed.stderr or completed.stdout or '').strip()}"
-            )
+        _emit_status(on_status, "Seeding build packages into the reusable venv template...")
+        _copy_directory_contents(runtime_site_packages, venv_site_packages)
 
         if not self._has_modules(venv_python, "nuitka", "PIL", "imageio", "av"):
             raise PythonRuntimeError(
@@ -597,7 +809,7 @@ class PythonRuntimeManager:
 
         _emit_status(on_status, "Preparing reusable virtual environment template...")
         self._create_runtime_env(python_exe, temp_root)
-        self._install_template_packages(temp_root, on_status=on_status)
+        self._install_template_packages(temp_root, os.path.dirname(python_exe), on_status=on_status)
         self._rewrite_pyvenv_cfg(temp_root, python_exe)
         os.replace(temp_root, template_root)
 

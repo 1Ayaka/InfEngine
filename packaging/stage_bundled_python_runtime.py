@@ -5,10 +5,8 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.request
 import zipfile
-from pathlib import Path
 
 try:
     import winreg
@@ -29,6 +27,11 @@ _BUILDER_PACKAGES = [
 ]
 
 
+def _runtime_lib_names() -> list[str]:
+    version = f"{sys.version_info.major}{sys.version_info.minor}"
+    return [f"python{version}.lib", "python3.lib"]
+
+
 def _run(args: list[str], *, timeout: int = 20) -> subprocess.CompletedProcess:
     kwargs = {
         "stdin": subprocess.DEVNULL,
@@ -42,26 +45,26 @@ def _run(args: list[str], *, timeout: int = 20) -> subprocess.CompletedProcess:
     return subprocess.run(args, **kwargs)
 
 
-def _runtime_embed_info_for_machine() -> tuple[str, str]:
+def _runtime_installer_info_for_machine() -> tuple[str, str]:
     machine = (os.environ.get("PROCESSOR_ARCHITECTURE") or "").lower()
     if machine in {"amd64", "x86_64"}:
         return (
-            "python-3.12.8-embed-amd64.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
+            "python-3.12.8-amd64.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
         )
     if machine in {"arm64", "aarch64"}:
         return (
-            "python-3.12.8-embed-arm64.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-arm64.zip",
+            "python-3.12.8-arm64.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-arm64.exe",
         )
     if machine in {"x86", "i386", "i686"}:
         return (
-            "python-3.12.8-embed-win32.zip",
-            "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-win32.zip",
+            "python-3.12.8.exe",
+            "https://www.python.org/ftp/python/3.12.8/python-3.12.8.exe",
         )
     return (
-        "python-3.12.8-embed-amd64.zip",
-        "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
+        "python-3.12.8-amd64.exe",
+        "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
     )
 
 
@@ -114,66 +117,49 @@ def _is_embedded_root(root: str) -> bool:
     return bool(_pth_files(root))
 
 
-def _enable_site_for_embedded_runtime(root: str) -> None:
-    required_lines = ["python312.zip", ".", "Lib", "Lib/site-packages"]
-    for pth_path in _pth_files(root):
-        try:
-            with open(pth_path, "r", encoding="utf-8") as f:
-                raw_lines = [line.rstrip("\r\n") for line in f]
-        except OSError:
-            continue
+def _has_dev_support(root: str) -> bool:
+    include_dir = os.path.join(root, "include")
+    libs_dir = os.path.join(root, "libs")
+    if not os.path.isfile(os.path.join(include_dir, "Python.h")):
+        return False
+    return any(os.path.isfile(os.path.join(libs_dir, name)) for name in _runtime_lib_names())
 
-        preserved: list[str] = []
-        seen: set[str] = set()
-        for line in raw_lines:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                preserved.append(line)
-                continue
-            if stripped == "import site":
-                continue
-            if stripped not in seen:
-                preserved.append(stripped)
-                seen.add(stripped)
 
-        for item in required_lines:
-            if item not in seen:
-                preserved.append(item)
-                seen.add(item)
-        preserved.append("import site")
+def _copytree_if_needed(src: str, dest: str) -> None:
+    if not os.path.isdir(src):
+        return
+    shutil.rmtree(dest, ignore_errors=True)
+    shutil.copytree(src, dest)
 
-        with open(pth_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write("\n".join(preserved).rstrip() + "\n")
+
+def _copy_libs_if_needed(src: str, dest: str) -> None:
+    if not os.path.isdir(src):
+        return
+    os.makedirs(dest, exist_ok=True)
+    for name in _runtime_lib_names():
+        source_path = os.path.join(src, name)
+        if os.path.isfile(source_path):
+            shutil.copy2(source_path, os.path.join(dest, name))
 
 
 def _ensure_builder_packages(root: str) -> None:
-    if not _is_embedded_root(root):
-        return
-
-    _enable_site_for_embedded_runtime(root)
-    site_packages = os.path.join(root, "Lib", "site-packages")
-    shutil.rmtree(site_packages, ignore_errors=True)
-    os.makedirs(site_packages, exist_ok=True)
+    target_python = _find_python_in_root(root)
+    if not target_python:
+        raise SystemExit(f"No python.exe found after preparing runtime: {root}")
 
     completed = _run([
-        sys.executable,
+        target_python,
         "-m",
         "pip",
         "install",
         "--upgrade",
-        "--target",
-        site_packages,
         *_BUILDER_PACKAGES,
     ], timeout=1800)
     if completed.returncode != 0:
         raise SystemExit(
-            "Failed to prepare embeddable Python builder packages.\n"
+            "Failed to prepare Python builder packages.\n"
             f"{(completed.stderr or completed.stdout or '').strip()}"
         )
-
-    target_python = _find_python_in_root(root)
-    if not target_python:
-        raise SystemExit(f"No python.exe found after preparing embeddable runtime: {root}")
 
     verify = _run([
         target_python,
@@ -182,7 +168,7 @@ def _ensure_builder_packages(root: str) -> None:
     ], timeout=60)
     if verify.returncode != 0:
         raise SystemExit(
-            "Embeddable Python runtime was staged, but required builder packages are not importable.\n"
+            "Python runtime was staged, but required builder packages are not importable.\n"
             f"{(verify.stderr or verify.stdout or '').strip()}"
         )
 
@@ -194,63 +180,76 @@ def _download_file(url: str, dest: str) -> None:
         shutil.copyfileobj(resp, f)
 
 
-def _wheelhouse_root(dest_root: str) -> str:
-    return os.path.join(os.path.dirname(dest_root), "wheels")
+def _runtime_bundle_path(dest_root: str) -> str:
+    return os.path.join(os.path.dirname(dest_root), "runtime_bundle.zip")
 
 
-def _ensure_builder_wheelhouse(dest_root: str) -> None:
-    wheelhouse = _wheelhouse_root(dest_root)
-    shutil.rmtree(wheelhouse, ignore_errors=True)
-    os.makedirs(wheelhouse, exist_ok=True)
+def _create_runtime_bundle(dest_root: str) -> None:
+    bundle_path = _runtime_bundle_path(dest_root)
+    tmp_bundle = bundle_path + ".tmp"
+    if os.path.isfile(tmp_bundle):
+        os.remove(tmp_bundle)
+
+    with zipfile.ZipFile(tmp_bundle, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        for root, _dirs, files in os.walk(dest_root):
+            rel_dir = os.path.relpath(root, os.path.dirname(dest_root))
+            for filename in files:
+                source_path = os.path.join(root, filename)
+                archive_name = os.path.join(rel_dir, filename)
+                zf.write(source_path, archive_name)
+
+    os.replace(tmp_bundle, bundle_path)
+
+
+def _installer_cache_path(dest_root: str) -> str:
+    installer_name, _installer_url = _runtime_installer_info_for_machine()
+    return os.path.join(os.path.dirname(dest_root), installer_name)
+
+
+def _install_full_runtime(dest_root: str) -> None:
+    if sys.platform != "win32":
+        raise SystemExit("Bundled full Python staging is only supported on Windows.")
+
+    parent = os.path.dirname(dest_root)
+    os.makedirs(parent, exist_ok=True)
+    installer_path = _installer_cache_path(dest_root)
+    if not os.path.isfile(installer_path):
+        _installer_name, installer_url = _runtime_installer_info_for_machine()
+        print(f"Downloading official Python installer: {installer_url}")
+        _download_file(installer_url, installer_path)
+
+    shutil.rmtree(dest_root, ignore_errors=True)
     completed = _run([
-        sys.executable,
-        "-m",
-        "pip",
-        "download",
-        "--dest",
-        wheelhouse,
-        *_BUILDER_PACKAGES,
-    ], timeout=1800)
+        installer_path,
+        "/quiet",
+        "InstallAllUsers=0",
+        f"TargetDir={dest_root}",
+        "AssociateFiles=0",
+        "PrependPath=0",
+        "Shortcuts=0",
+        "CompileAll=0",
+        "Include_test=0",
+        "Include_launcher=0",
+        "InstallLauncherAllUsers=0",
+        "Include_pip=1",
+        "Include_dev=1",
+        "Include_venv=1",
+    ], timeout=3600)
     if completed.returncode != 0:
         raise SystemExit(
-            "Failed to prepare offline wheelhouse for bundled Python builder packages.\n"
+            "Failed to install official Python 3.12 into the bundled runtime directory.\n"
             f"{(completed.stderr or completed.stdout or '').strip()}"
         )
 
 
-def _extract_embeddable_runtime(dest_root: str) -> None:
-    archive_name, archive_url = _runtime_embed_info_for_machine()
-    parent = os.path.dirname(dest_root)
-    os.makedirs(parent, exist_ok=True)
-
-    with tempfile.TemporaryDirectory(prefix="infengine-embed-") as tmp_dir:
-        archive_path = os.path.join(tmp_dir, archive_name)
-        _download_file(archive_url, archive_path)
-
-        extract_root = os.path.join(tmp_dir, "python312")
-        os.makedirs(extract_root, exist_ok=True)
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(extract_root)
-
-        shutil.rmtree(dest_root, ignore_errors=True)
-        shutil.copytree(extract_root, dest_root)
-
-
-def _stage_embeddable_runtime(dest_root: str) -> None:
-    print("Migrating bundled runtime to official embeddable Python 3.12...")
-    _extract_embeddable_runtime(dest_root)
-    _ensure_builder_packages(dest_root)
-    _ensure_builder_wheelhouse(dest_root)
-
-
-def _is_usable_embeddable_runtime(root: str) -> bool:
+def _is_usable_full_runtime(root: str) -> bool:
     python_exe = _find_python_in_root(root)
     return bool(
         python_exe
         and _is_python312(python_exe)
-        and _is_embedded_root(root)
+        and not _is_embedded_root(root)
+        and _has_dev_support(root)
         and _run([python_exe, "-c", "import pip, virtualenv, nuitka, PIL, imageio, av; print('ok')"], timeout=60).returncode == 0
-        and os.path.isdir(_wheelhouse_root(root))
     )
 
 
@@ -355,22 +354,11 @@ def main() -> int:
     dest_root = os.path.abspath(args.dest_root)
     existing = _find_python_in_root(dest_root)
     if existing and _is_python312(existing):
-        if _is_usable_embeddable_runtime(dest_root):
-            print(f"Bundled embeddable Python 3.12 already present: {existing}")
+        if _is_usable_full_runtime(dest_root):
+            print(f"Bundled full Python 3.12 already present: {existing}")
             return 0
 
-        if _is_embedded_root(dest_root):
-            _ensure_builder_packages(dest_root)
-            _ensure_builder_wheelhouse(dest_root)
-            print(f"Bundled embeddable Python 3.12 prepared: {existing}")
-            return 0
-
-        _stage_embeddable_runtime(dest_root)
-        staged = _find_python_in_root(dest_root)
-        if staged and _is_usable_embeddable_runtime(dest_root):
-            print(f"Bundled Python 3.12 migrated to embeddable runtime: {dest_root}")
-            return 0
-        raise SystemExit(f"Failed to migrate bundled runtime at {dest_root}")
+        shutil.rmtree(dest_root, ignore_errors=True)
 
     parent = os.path.dirname(dest_root)
     os.makedirs(parent, exist_ok=True)
@@ -378,19 +366,24 @@ def main() -> int:
     for candidate in _candidate_python_paths():
         if not _is_python312(candidate):
             continue
+        if _is_embedded_root(os.path.dirname(candidate)):
+            continue
         print(f"Staging bundled Python 3.12 from: {candidate}")
         _copy_runtime(candidate, dest_root)
         _ensure_builder_packages(dest_root)
-        _ensure_builder_wheelhouse(dest_root)
+        _create_runtime_bundle(dest_root)
         staged = _find_python_in_root(dest_root)
-        if staged and _is_python312(staged):
+        if staged and _is_usable_full_runtime(dest_root):
             print(f"Bundled Python 3.12 staged to: {dest_root}")
             return 0
 
-    _stage_embeddable_runtime(dest_root)
+    print("Installing bundled full Python 3.12 from official installer...")
+    _install_full_runtime(dest_root)
+    _ensure_builder_packages(dest_root)
+    _create_runtime_bundle(dest_root)
     staged = _find_python_in_root(dest_root)
-    if staged and _is_usable_embeddable_runtime(dest_root):
-        print(f"Bundled Python 3.12 staged from official embeddable package: {dest_root}")
+    if staged and _is_usable_full_runtime(dest_root):
+        print(f"Bundled full Python 3.12 staged from official installer: {dest_root}")
         return 0
 
     raise SystemExit(

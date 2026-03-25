@@ -198,7 +198,7 @@ add_custom_target(prepare_bundled_python_runtime
         "${CMAKE_SOURCE_DIR}/packaging/stage_bundled_python_runtime.py"
         --dest-root "${CMAKE_SOURCE_DIR}/packaging/runtime/python312"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Stage bundled embed runtime assets"
+    COMMENT "Stage bundled full Python runtime assets"
 )
 
 add_custom_target(infengine_hub
@@ -210,6 +210,7 @@ add_custom_target(infengine_hub
         --clean
         --noconfirm
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/packaging"
+    DEPENDS prepare_bundled_python_runtime
     COMMENT "Build InfEngine Hub standalone application → dist/InfEngine Hub/"
 )
 

@@ -118,6 +118,12 @@ class ControlPaneViewModel:
         from splash_screen import EngineSplashScreen
         from hub_resources import ICON_PATH
 
+        extra_env = None
+        if is_frozen() and self.runtime_manager is not None:
+            builder_python = self.runtime_manager.get_runtime_path()
+            if builder_python and os.path.isfile(builder_python):
+                extra_env = {"INFENGINE_BUILDER_PYTHON": builder_python}
+
         splash = EngineSplashScreen(ICON_PATH, project_name, parent=None)
         splash.show()
         splash.launch(
@@ -125,6 +131,7 @@ class ControlPaneViewModel:
             script,
             project_path,
             detached=is_frozen(),
+            extra_env=extra_env,
         )
         self._splash = splash
 

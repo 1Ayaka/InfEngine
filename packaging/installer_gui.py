@@ -196,7 +196,7 @@ class InstallerWindow(QWidget):
 
         intro = QLabel(
             "This installer copies InfEngine Hub onto your machine. During setup, it will download and prepare "
-            "an embedded Python 3.12 runtime for this user and build a reusable venv template for future project creation."
+            "a managed full Python 3.12 runtime under C:\\Users\\Public\\InfEngineHub and build a reusable venv template for future project creation."
         )
         intro.setWordWrap(True)
         intro.setMinimumHeight(56)
