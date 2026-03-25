@@ -54,18 +54,26 @@ bool InfVkCoreModular::CreateGlobalsDescriptorResources()
     if (device == VK_NULL_HANDLE)
         return false;
 
-    // Layout: set 2, binding 0 = uniform buffer, vertex + fragment stages
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    binding.pImmutableSamplers = nullptr;
+    // Layout: set 2, binding 0 = uniform buffer (globals UBO), vertex + fragment
+    //         set 2, binding 1 = storage buffer (instance models), vertex only
+    VkDescriptorSetLayoutBinding bindings[2]{};
+
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[0].pImmutableSamplers = nullptr;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    bindings[1].pImmutableSamplers = nullptr;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &binding;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = bindings;
 
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &m_globalsDescSetLayout) != VK_SUCCESS) {
         INFLOG_ERROR("Failed to create globals descriptor set layout");
@@ -75,17 +83,19 @@ bool InfVkCoreModular::CreateGlobalsDescriptorResources()
     // Publish to ShaderProgram so all pipelines pick up the shared layout at set 2
     ShaderProgram::SetGlobalsDescSetLayout(m_globalsDescSetLayout);
 
-    // Pool: one set per frame-in-flight
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = static_cast<uint32_t>(m_maxFramesInFlight);
+    // Pool: one UBO + one SSBO per frame-in-flight
+    VkDescriptorPoolSize poolSizes[2]{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(m_maxFramesInFlight);
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(m_maxFramesInFlight);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.flags = 0;
     poolInfo.maxSets = static_cast<uint32_t>(m_maxFramesInFlight);
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_globalsDescPool) != VK_SUCCESS) {
         INFLOG_ERROR("Failed to create globals descriptor pool");
@@ -116,28 +126,56 @@ bool InfVkCoreModular::CreateGlobalsDescriptorResources()
     }
 
     // Write each descriptor set to point at the corresponding globals buffer
+    // and a placeholder instance SSBO
+    m_instanceBuffers.resize(m_maxFramesInFlight);
     for (size_t i = 0; i < m_maxFramesInFlight; ++i) {
-        if (!m_globalsBuffers[i])
+        // Create initial instance buffer for this frame
+        const VkDeviceSize initialBytes = INSTANCE_BUFFER_INITIAL_CAPACITY * sizeof(glm::mat4);
+        m_instanceBuffers[i].buffer = m_resourceManager.CreateStorageBuffer(initialBytes, /*deviceLocal=*/false);
+        m_instanceBuffers[i].capacity = INSTANCE_BUFFER_INITIAL_CAPACITY;
+
+        if (!m_instanceBuffers[i].buffer) {
+            INFLOG_ERROR("Failed to create instance buffer for frame ", i);
             continue;
+        }
 
-        VkDescriptorBufferInfo bufInfo{};
-        bufInfo.buffer = m_globalsBuffers[i]->GetBuffer();
-        bufInfo.offset = 0;
-        bufInfo.range = sizeof(EngineGlobalsUBO);
+        VkWriteDescriptorSet writes[2]{};
 
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = m_globalsDescSets[i];
-        write.dstBinding = 0;
-        write.dstArrayElement = 0;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        write.descriptorCount = 1;
-        write.pBufferInfo = &bufInfo;
+        // Binding 0: Globals UBO
+        VkDescriptorBufferInfo uboBufInfo{};
+        if (m_globalsBuffers[i]) {
+            uboBufInfo.buffer = m_globalsBuffers[i]->GetBuffer();
+            uboBufInfo.offset = 0;
+            uboBufInfo.range = sizeof(EngineGlobalsUBO);
+        }
 
-        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = m_globalsDescSets[i];
+        writes[0].dstBinding = 0;
+        writes[0].dstArrayElement = 0;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo = &uboBufInfo;
+
+        // Binding 1: Instance SSBO
+        VkDescriptorBufferInfo ssboBufInfo{};
+        ssboBufInfo.buffer = m_instanceBuffers[i].buffer->GetBuffer();
+        ssboBufInfo.offset = 0;
+        ssboBufInfo.range = VK_WHOLE_SIZE;
+
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = m_globalsDescSets[i];
+        writes[1].dstBinding = 1;
+        writes[1].dstArrayElement = 0;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[1].descriptorCount = 1;
+        writes[1].pBufferInfo = &ssboBufInfo;
+
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
     }
 
-    INFLOG_INFO("Created globals descriptor set layout, pool, and ", m_maxFramesInFlight, " sets (set 2)");
+    INFLOG_INFO("Created globals descriptor set layout, pool, and ", m_maxFramesInFlight,
+                " sets (set 2) with instance SSBO");
     return true;
 }
 
@@ -147,6 +185,7 @@ void InfVkCoreModular::DestroyGlobalsDescriptorResources()
     if (device == VK_NULL_HANDLE)
         return;
 
+    m_instanceBuffers.clear();
     m_globalsDescSets.clear();
 
     if (m_globalsDescPool != VK_NULL_HANDLE) {
@@ -158,6 +197,112 @@ void InfVkCoreModular::DestroyGlobalsDescriptorResources()
         vkDestroyDescriptorSetLayout(device, m_globalsDescSetLayout, nullptr);
         m_globalsDescSetLayout = VK_NULL_HANDLE;
     }
+}
+
+// ============================================================================
+// Instance buffer management
+// ============================================================================
+
+void InfVkCoreModular::EnsureInstanceBufferCapacity(uint32_t frameIndex, size_t instanceCount)
+{
+    if (frameIndex >= m_instanceBuffers.size())
+        return;
+
+    auto &frame = m_instanceBuffers[frameIndex];
+    if (frame.capacity >= instanceCount && frame.buffer)
+        return;
+
+    std::unique_ptr<vk::VkBufferHandle> oldBuffer = std::move(frame.buffer);
+
+    // Grow to next power-of-two that fits
+    size_t newCapacity = frame.capacity > 0 ? frame.capacity : INSTANCE_BUFFER_INITIAL_CAPACITY;
+    while (newCapacity < instanceCount)
+        newCapacity *= 2;
+
+    const VkDeviceSize newBytes = newCapacity * sizeof(glm::mat4);
+    auto newBuffer = m_resourceManager.CreateStorageBuffer(newBytes, /*deviceLocal=*/false);
+    if (!newBuffer) {
+        INFLOG_ERROR("Failed to grow instance buffer to ", newCapacity, " instances (", newBytes, " bytes)");
+        frame.buffer = std::move(oldBuffer);
+        return;
+    }
+
+    // Preserve existing data written earlier in this frame
+    if (oldBuffer && m_instanceWriteOffset > 0) {
+        void *oldMapped = oldBuffer->Map();
+        void *newMapped = newBuffer->Map();
+        if (oldMapped && newMapped) {
+            std::memcpy(newMapped, oldMapped, m_instanceWriteOffset * sizeof(glm::mat4));
+            newBuffer->Unmap();
+        }
+        oldBuffer->Unmap();
+    }
+
+    frame.buffer = std::move(newBuffer);
+    frame.capacity = newCapacity;
+
+    // NOTE: Do NOT call UpdateInstanceBufferDescriptor() here.
+    // This function can be called mid-recording, and updating a descriptor set
+    // that is already bound in the command buffer invalidates it.
+    // The descriptor is updated once before any draws in PreallocateInstances().
+
+    // Old instance buffers may still be referenced by commands already
+    // recorded earlier in this same command buffer. Defer final destruction
+    // until the frame deletion queue says all in-flight use is complete.
+    if (oldBuffer) {
+        auto retiredBuffer = std::shared_ptr<vk::VkBufferHandle>(oldBuffer.release());
+        m_deletionQueue.Push([retiredBuffer]() mutable { retiredBuffer.reset(); });
+    }
+}
+
+void InfVkCoreModular::PreallocateInstances(size_t totalDrawCalls)
+{
+    if (totalDrawCalls == 0)
+        return;
+
+    const uint32_t frameIndex = m_currentFrame % m_maxFramesInFlight;
+
+    // Reset per-frame write offset on new frame (mirrors logic in RecordGroupedFilteredDrawCalls).
+    if (m_lastInstanceFrame != m_currentFrame) {
+        m_instanceWriteOffset = 0;
+        m_lastInstanceFrame = m_currentFrame;
+    }
+
+    // Upper bound: every draw call can appear once in an opaque pass and
+    // once per shadow cascade.  Pre-allocating here guarantees the buffer
+    // never grows mid-recording, avoiding descriptor-set-update-while-bound.
+    const size_t maxInstances = totalDrawCalls * (1 + NUM_SHADOW_CASCADES);
+    EnsureInstanceBufferCapacity(frameIndex, maxInstances);
+
+    // Safe to update the descriptor now — no draws have been recorded yet.
+    UpdateInstanceBufferDescriptor(frameIndex);
+}
+
+void InfVkCoreModular::UpdateInstanceBufferDescriptor(uint32_t frameIndex)
+{
+    VkDevice device = GetDevice();
+    if (device == VK_NULL_HANDLE || frameIndex >= m_globalsDescSets.size() || frameIndex >= m_instanceBuffers.size())
+        return;
+
+    const auto &frame = m_instanceBuffers[frameIndex];
+    if (!frame.buffer)
+        return;
+
+    VkDescriptorBufferInfo ssboBufInfo{};
+    ssboBufInfo.buffer = frame.buffer->GetBuffer();
+    ssboBufInfo.offset = 0;
+    ssboBufInfo.range = VK_WHOLE_SIZE;
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_globalsDescSets[frameIndex];
+    write.dstBinding = 1;
+    write.dstArrayElement = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.descriptorCount = 1;
+    write.pBufferInfo = &ssboBufInfo;
+
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 }
 
 // ============================================================================

@@ -60,7 +60,10 @@ class Light : public Component
 {
   public:
     Light() = default;
-    ~Light() override = default;
+    ~Light() override;
+
+    void OnEnable() override;
+    void OnDisable() override;
 
     [[nodiscard]] const char *GetTypeName() const override
     {

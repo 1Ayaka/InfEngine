@@ -23,11 +23,11 @@ def collect_canvases_with_go(scene: Any) -> List[Tuple[Any, UICanvas]]:
     ...
 
 
-def collect_canvases(scene: Any) -> List[UICanvas]:
+def collect_canvases(scene: Any, *, allow_stale_empty: bool = False) -> List[UICanvas]:
     """Return ``[UICanvas, ...]`` for every canvas in *scene*."""
     ...
 
 
-def collect_sorted_canvases(scene: Any) -> List[UICanvas]:
+def collect_sorted_canvases(scene: Any, *, allow_stale_empty: bool = False) -> List[UICanvas]:
     """Return ``[UICanvas, ...]`` sorted by ``sort_order`` (cached)."""
     ...

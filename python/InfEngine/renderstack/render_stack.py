@@ -557,20 +557,22 @@ class RenderStack(InfComponent):
         if self._pass_entries is None:
             self._pass_entries = []
 
-        context.setup_camera_properties(camera)
-        culling = context.cull(camera)
-
         # Lazy build graph topology (skip if last build failed)
         if self._graph_desc is None and not self._build_failed:
+            context.setup_camera_properties(camera)
+            culling = context.cull(camera)
             self._graph_desc = self.build_graph()
 
-        if self._graph_desc is None:
-            # Build previously failed; skip rendering until hot-reload fixes it
-            context.submit_culling(culling)
-            return
+            if self._graph_desc is None:
+                # Build previously failed; skip rendering until hot-reload fixes it
+                context.submit_culling(culling)
+                return
 
-        context.apply_graph(self._graph_desc)
-        context.submit_culling(culling)
+            context.apply_graph(self._graph_desc)
+            context.submit_culling(culling)
+        elif self._graph_desc is not None:
+            # Fast path: single C++ call avoids 3 extra Python→C++ round-trips
+            context.render_with_graph(camera, self._graph_desc)
 
     # ==================================================================
     # Private helpers

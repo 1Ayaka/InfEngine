@@ -21,6 +21,7 @@ from InfEngine.ui.ui_texture_cache import get_shared_cache as _get_tex_cache
 from InfEngine.ui.ui_render_dispatch import dispatch as _ui_dispatch
 from InfEngine.ui.ui_event_system import UIEventProcessor
 from InfEngine.ui.ui_canvas_utils import collect_sorted_canvases
+from InfEngine.ui.inf_ui_screen_component import clear_rect_cache
 
 
 class PlayerGUI(InfGUIRenderable):
@@ -176,8 +177,11 @@ class PlayerGUI(InfGUIRenderable):
         if game_w < 1 or game_h < 1:
             return
 
+        canvases = collect_sorted_canvases(scene, allow_stale_empty=True)
+        if canvases:
+            clear_rect_cache(time.perf_counter())
+
         renderer.begin_frame(game_w, game_h)
-        canvases = collect_sorted_canvases(scene)
         if not canvases:
             return
         use_overlay = not renderer.is_enabled()
@@ -245,7 +249,7 @@ class PlayerGUI(InfGUIRenderable):
         if scene is None:
             return
 
-        canvases = collect_sorted_canvases(scene)
+        canvases = collect_sorted_canvases(scene, allow_stale_empty=True)
         if not canvases:
             self._ui_event_processor.reset()
             return

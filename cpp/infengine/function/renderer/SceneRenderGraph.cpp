@@ -13,6 +13,7 @@
 #include "gui/InfScreenUIRenderer.h"
 #include "vk/VkDeviceContext.h"
 #include "vk/VkPipelineManager.h"
+#include <SDL3/SDL.h>
 #include <algorithm>
 #include <core/error/InfError.h>
 #include <function/resources/InfMaterial/InfMaterial.h>
@@ -741,6 +742,10 @@ void SceneRenderGraph::BuildRenderGraph()
     }
 
     m_vkCore->GetDeviceContext().WaitIdle();
+
+    // Keep the OS message pump alive during graph rebuilds that follow a
+    // scene switch (each BuildRenderGraph call includes a full device drain).
+    SDL_PumpEvents();
 
     m_renderGraph->Reset();
     for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) {

@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "../FrameDeletionQueue.h"
+
 #include <imgui.h>
 #include <string>
 #include <vector>
@@ -61,6 +63,11 @@ class InfScreenUIRenderer
      * @return true if successful
      */
     bool Initialize(VkDevice device, VmaAllocator allocator, VkFormat colorFormat, VkSampleCountFlagBits msaaSamples);
+
+    void SetDeletionQueue(FrameDeletionQueue *queue)
+    {
+        m_deletionQueue = queue;
+    }
 
     /**
      * @brief Cleanup all resources
@@ -212,6 +219,7 @@ class InfScreenUIRenderer
     uint32_t m_frameHeight = 0;
     bool m_initialized = false;
     bool m_enabled = true;
+    FrameDeletionQueue *m_deletionQueue = nullptr;
 };
 
 } // namespace infengine

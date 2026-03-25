@@ -3,6 +3,7 @@
 #include "GameObject.h"
 #include "Light.h"
 #include "Scene.h"
+#include "SceneManager.h"
 #include "SceneRenderer.h"
 #include "Transform.h"
 #include <algorithm>
@@ -25,23 +26,21 @@ void SceneLightCollector::CollectLights(Scene *scene, const glm::vec3 &cameraPos
     // Set camera position
     m_lightingUBO.worldSpaceCameraPos = glm::vec4(cameraPosition, 1.0f);
 
-    // Find all GameObjects with Light components
-    std::vector<GameObject *> allObjects = scene->GetAllObjects();
+    // Iterate the Light component registry (O(L) where L = light count)
+    // instead of walking the full scene tree (O(N) where N = all objects).
+    const auto &activeLights = SceneManager::Instance().GetActiveLights();
 
-    for (GameObject *obj : allObjects) {
-        if (!obj || !obj->IsActiveInHierarchy()) {
+    for (Light *light : activeLights) {
+        if (!light || !light->IsEnabled())
             continue;
-        }
 
-        Light *light = obj->GetComponent<Light>();
-        if (!light || !light->IsEnabled()) {
+        GameObject *obj = light->GetGameObject();
+        if (!obj || !obj->IsActiveInHierarchy())
             continue;
-        }
 
         Transform *transform = obj->GetTransform();
-        if (!transform) {
+        if (!transform)
             continue;
-        }
 
         glm::vec3 worldPosition = transform->GetWorldPosition();
         glm::vec3 worldForward = transform->GetWorldForward();
@@ -293,12 +292,12 @@ void SceneLightCollector::ComputeShadowVP(Scene *scene, const glm::vec3 &cameraP
     constexpr float kMaxShadowDistance = 160.0f;
     constexpr float kCascadeLambda = 0.72f; // log/uniform blend
 
-    auto allObjects = scene->GetAllObjects();
-    for (auto *obj : allObjects) {
-        if (!obj || !obj->IsActiveInHierarchy())
-            continue;
-        Light *light = obj->GetComponent<Light>();
+    const auto &activeLights = SceneManager::Instance().GetActiveLights();
+    for (Light *light : activeLights) {
         if (!light || !light->IsEnabled())
+            continue;
+        GameObject *obj = light->GetGameObject();
+        if (!obj || !obj->IsActiveInHierarchy())
             continue;
         if (light->GetLightType() != LightType::Directional)
             continue;
@@ -376,11 +375,15 @@ void SceneLightCollector::ComputeShadowVP(Scene *scene, const glm::vec3 &cameraP
             // Expand by 1 texel to compensate for center-snap shifting the box boundary
             halfExt += texelSz;
 
-            float pad = std::max(20.0f, (maxs.z - mins.z) * 0.35f);
+            // Push the near plane generously behind the camera frustum slice so
+            // that shadow casters upstream along the light direction (behind) are
+            // still included.  The far side only needs a small margin.
+            float nearPad = std::max(200.0f, (maxs.z - mins.z) * 2.0f);
+            float farPad  = std::max(20.0f, (maxs.z - mins.z) * 0.35f);
             // GLM orthoLH_ZO: visible range is eye_z ∈ [zNear, zFar].
             // View-space z is positive for objects in front of the light.
-            float orthoNear = mins.z - pad;
-            float orthoFar = maxs.z + pad;
+            float orthoNear = mins.z - nearPad;
+            float orthoFar = maxs.z + farPad;
             // Guard against degenerate range (near ≈ far) → depth precision disaster
             if (orthoFar - orthoNear < 1.0f)
                 orthoFar = orthoNear + 1.0f;

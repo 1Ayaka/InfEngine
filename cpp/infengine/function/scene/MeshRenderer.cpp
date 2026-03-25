@@ -5,6 +5,8 @@
 #include <core/log/InfLog.h>
 #include <function/resources/AssetDependencyGraph.h>
 #include <function/resources/AssetRegistry/AssetRegistry.h>
+#include <function/scene/PrimitiveMeshes.h>
+#include <cstring>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -13,6 +15,122 @@ using json = nlohmann::json;
 
 namespace infengine
 {
+
+namespace
+{
+
+bool MeshDataEquals(const std::shared_ptr<InfMesh> &mesh, const std::vector<Vertex> &vertices,
+                    const std::vector<uint32_t> &indices)
+{
+    if (!mesh)
+        return false;
+    if (mesh->GetVertices().size() != vertices.size() || mesh->GetIndices().size() != indices.size())
+        return false;
+
+    const bool sameVertices = vertices.empty() ||
+                              std::memcmp(mesh->GetVertices().data(), vertices.data(), vertices.size() * sizeof(Vertex)) == 0;
+    const bool sameIndices = indices.empty() ||
+                             std::memcmp(mesh->GetIndices().data(), indices.data(), indices.size() * sizeof(uint32_t)) == 0;
+    return sameVertices && sameIndices;
+}
+
+std::string FindMatchingMeshAssetGuid(const std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices,
+                                      const std::string &preferredName)
+{
+    if (vertices.empty() || indices.empty())
+        return {};
+
+    auto &registry = AssetRegistry::Instance();
+    auto *assetDb = registry.GetAssetDatabase();
+    if (!assetDb)
+        return {};
+
+    auto tryFind = [&](bool requirePreferredName) -> std::string {
+        for (const auto &guid : assetDb->GetAllResourceGuids()) {
+            const auto *meta = assetDb->GetMetaByGuid(guid);
+            if (!meta || meta->GetResourceType() != ResourceType::Mesh)
+                continue;
+
+            if (requirePreferredName) {
+                if (preferredName.empty() || meta->GetResourceName() != preferredName)
+                    continue;
+            }
+
+            auto mesh = registry.GetAsset<InfMesh>(guid);
+            if (!mesh)
+                mesh = registry.LoadAsset<InfMesh>(guid, ResourceType::Mesh);
+            if (!MeshDataEquals(mesh, vertices, indices))
+                continue;
+            return guid;
+        }
+        return {};
+    };
+
+    if (!preferredName.empty()) {
+        if (auto guid = tryFind(true); !guid.empty())
+            return guid;
+    }
+
+    return tryFind(false);
+}
+
+bool GetBuiltinPrimitiveMeshData(const std::string &name, const std::vector<Vertex> *&vertices,
+                                 const std::vector<uint32_t> *&indices)
+{
+    vertices = nullptr;
+    indices = nullptr;
+
+    if (name == "Cube") {
+        vertices = &PrimitiveMeshes::GetCubeVertices();
+        indices = &PrimitiveMeshes::GetCubeIndices();
+    } else if (name == "Sphere") {
+        vertices = &PrimitiveMeshes::GetSphereVertices();
+        indices = &PrimitiveMeshes::GetSphereIndices();
+    } else if (name == "Capsule") {
+        vertices = &PrimitiveMeshes::GetCapsuleVertices();
+        indices = &PrimitiveMeshes::GetCapsuleIndices();
+    } else if (name == "Cylinder") {
+        vertices = &PrimitiveMeshes::GetCylinderVertices();
+        indices = &PrimitiveMeshes::GetCylinderIndices();
+    } else if (name == "Plane") {
+        vertices = &PrimitiveMeshes::GetPlaneVertices();
+        indices = &PrimitiveMeshes::GetPlaneIndices();
+    }
+
+    return vertices != nullptr && indices != nullptr;
+}
+
+bool MatchesBuiltinPrimitiveMesh(const std::string &name, const std::vector<Vertex> &vertices,
+                                 const std::vector<uint32_t> &indices)
+{
+    const std::vector<Vertex> *builtinVertices = nullptr;
+    const std::vector<uint32_t> *builtinIndices = nullptr;
+    if (!GetBuiltinPrimitiveMeshData(name, builtinVertices, builtinIndices))
+        return false;
+
+    if (builtinVertices->size() != vertices.size() || builtinIndices->size() != indices.size())
+        return false;
+
+    const bool sameVertices = builtinVertices->empty() ||
+                              std::memcmp(builtinVertices->data(), vertices.data(), vertices.size() * sizeof(Vertex)) == 0;
+    const bool sameIndices = builtinIndices->empty() ||
+                             std::memcmp(builtinIndices->data(), indices.data(), indices.size() * sizeof(uint32_t)) == 0;
+    return sameVertices && sameIndices;
+}
+
+void RestoreBuiltinPrimitiveMesh(const std::string &name, std::vector<Vertex> &vertices,
+                                 std::vector<uint32_t> &indices)
+{
+    const std::vector<Vertex> *builtinVertices = nullptr;
+    const std::vector<uint32_t> *builtinIndices = nullptr;
+    if (!GetBuiltinPrimitiveMeshData(name, builtinVertices, builtinIndices))
+        return;
+
+    vertices.assign(builtinVertices->begin(), builtinVertices->end());
+    indices.assign(builtinIndices->begin(), builtinIndices->end());
+}
+
+} // namespace
 
 INFENGINE_REGISTER_COMPONENT("MeshRenderer", MeshRenderer)
 
@@ -376,9 +494,17 @@ std::string MeshRenderer::Serialize() const
     // Mesh reference
     j["meshId"] = m_mesh.meshId;
 
+    const bool builtinPrimitive = m_useInlineMesh && !m_inlineMeshName.empty() &&
+                                  MatchesBuiltinPrimitiveMesh(m_inlineMeshName, m_inlineVertices, m_inlineIndices);
+    const std::string matchedInlineMeshGuid = (!HasMeshAsset() && m_useInlineMesh && !builtinPrimitive)
+                                                  ? FindMatchingMeshAssetGuid(m_inlineVertices, m_inlineIndices,
+                                                                              m_inlineMeshName)
+                                                  : std::string();
+    const std::string serializedMeshGuid = HasMeshAsset() ? m_meshAsset.GetGuid() : matchedInlineMeshGuid;
+
     // Mesh asset GUID (for model-file meshes managed by AssetRegistry)
-    if (HasMeshAsset()) {
-        j["meshAssetGuid"] = m_meshAsset.GetGuid();
+    if (!serializedMeshGuid.empty()) {
+        j["meshAssetGuid"] = serializedMeshGuid;
     }
 
     // Materials — GUID array (v3)
@@ -412,29 +538,34 @@ std::string MeshRenderer::Serialize() const
     j["boundsMin"] = {m_localBoundsMin.x, m_localBoundsMin.y, m_localBoundsMin.z};
     j["boundsMax"] = {m_localBoundsMax.x, m_localBoundsMax.y, m_localBoundsMax.z};
 
-    // Inline mesh data (for primitives like cubes)
-    j["useInlineMesh"] = m_useInlineMesh;
+    // Inline mesh data (for primitives and procedural geometry)
+    const bool serializeInlineMesh = m_useInlineMesh && serializedMeshGuid.empty();
+    j["useInlineMesh"] = serializeInlineMesh;
     if (!m_inlineMeshName.empty()) {
         j["inlineMeshName"] = m_inlineMeshName;
     }
-    if (m_useInlineMesh) {
-        json verticesJson = json::array();
-        for (const auto &v : m_inlineVertices) {
-            json vj;
-            vj["pos"] = {v.pos.x, v.pos.y, v.pos.z};
-            vj["normal"] = {v.normal.x, v.normal.y, v.normal.z};
-            vj["tangent"] = {v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w};
-            vj["color"] = {v.color.x, v.color.y, v.color.z};
-            vj["texCoord"] = {v.texCoord.x, v.texCoord.y};
-            verticesJson.push_back(vj);
-        }
-        j["inlineVertices"] = verticesJson;
+    if (serializeInlineMesh) {
+        if (builtinPrimitive) {
+            j["inlineMeshBuiltin"] = true;
+        } else {
+            json verticesJson = json::array();
+            for (const auto &v : m_inlineVertices) {
+                json vj;
+                vj["pos"] = {v.pos.x, v.pos.y, v.pos.z};
+                vj["normal"] = {v.normal.x, v.normal.y, v.normal.z};
+                vj["tangent"] = {v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w};
+                vj["color"] = {v.color.x, v.color.y, v.color.z};
+                vj["texCoord"] = {v.texCoord.x, v.texCoord.y};
+                verticesJson.push_back(vj);
+            }
+            j["inlineVertices"] = verticesJson;
 
-        json indicesJson = json::array();
-        for (uint32_t idx : m_inlineIndices) {
-            indicesJson.push_back(idx);
+            json indicesJson = json::array();
+            for (uint32_t idx : m_inlineIndices) {
+                indicesJson.push_back(idx);
+            }
+            j["inlineIndices"] = indicesJson;
         }
-        j["inlineIndices"] = indicesJson;
     }
 
     return j.dump(2);
@@ -532,7 +663,10 @@ bool MeshRenderer::Deserialize(const std::string &jsonStr)
         m_inlineIndices.clear();
 
         if (m_useInlineMesh) {
-            if (j.contains("inlineVertices") && j["inlineVertices"].is_array()) {
+            const bool isBuiltinPrimitive = j.value("inlineMeshBuiltin", false);
+            if (isBuiltinPrimitive) {
+                RestoreBuiltinPrimitiveMesh(m_inlineMeshName, m_inlineVertices, m_inlineIndices);
+            } else if (j.contains("inlineVertices") && j["inlineVertices"].is_array()) {
                 for (const auto &vj : j["inlineVertices"]) {
                     Vertex v;
                     if (vj.contains("pos") && vj["pos"].is_array() && vj["pos"].size() == 3) {
@@ -571,6 +705,16 @@ bool MeshRenderer::Deserialize(const std::string &jsonStr)
                 for (const auto &idx : j["inlineIndices"]) {
                     m_inlineIndices.push_back(idx.get<uint32_t>());
                 }
+            }
+
+            if (m_inlineVertices.empty() && m_inlineIndices.empty() && !m_inlineMeshName.empty()) {
+                // Backward-compatible compact fallback if a scene omits inline arrays
+                // but marks a known built-in primitive by name.
+                RestoreBuiltinPrimitiveMesh(m_inlineMeshName, m_inlineVertices, m_inlineIndices);
+            }
+
+            if (!m_inlineVertices.empty()) {
+                ComputeLocalBoundsFromInlineVertices();
             }
         }
 

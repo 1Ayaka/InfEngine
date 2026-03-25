@@ -8,6 +8,7 @@
 
 #include "VkSwapchainManager.h"
 #include "VkDeviceContext.h"
+#include <SDL3/SDL.h>
 #include <core/error/InfError.h>
 
 #include <algorithm>
@@ -17,6 +18,27 @@ namespace infengine
 {
 namespace vk
 {
+
+namespace
+{
+
+void WaitForFencePumpingEvents(VkDevice device, VkFence fence)
+{
+    constexpr uint64_t kPollTimeoutNs = 50'000'000; // 50 ms
+    while (true) {
+        VkResult result = vkWaitForFences(device, 1, &fence, VK_TRUE, kPollTimeoutNs);
+        if (result == VK_SUCCESS) {
+            return;
+        }
+        if (result != VK_TIMEOUT) {
+            INFLOG_ERROR("vkWaitForFences failed while waiting for frame fence: ", VkResultToString(result));
+            return;
+        }
+        SDL_PumpEvents();
+    }
+}
+
+} // namespace
 
 // ============================================================================
 // Constructor / Destructor / Move
@@ -348,8 +370,7 @@ SwapchainResult VkSwapchainManager::Present(uint32_t imageIndex)
 
 void VkSwapchainManager::WaitForFrame()
 {
-    vkWaitForFences(m_device, 1, &m_syncObjects[m_currentFrame].inFlightFence, VK_TRUE,
-                    std::numeric_limits<uint64_t>::max());
+    WaitForFencePumpingEvents(m_device, m_syncObjects[m_currentFrame].inFlightFence);
 }
 
 void VkSwapchainManager::ResetCurrentFence()

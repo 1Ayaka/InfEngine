@@ -207,6 +207,17 @@ void InfRenderer::PreparePipeline()
                 (m_sceneViewVisible && m_sceneRenderTarget && m_sceneRenderTarget->IsReady() &&
                  m_sceneRenderTarget->GetWidth() > 1 && m_sceneRenderTarget->GetHeight() > 1);
 
+            // Pre-allocate instance SSBO for all graphs so the buffer (and its
+            // descriptor binding) never changes mid-recording.
+            {
+                size_t totalDC = 0;
+                if (m_sceneRenderGraph && m_sceneRenderGraph->HasCachedDrawCalls())
+                    totalDC += m_sceneRenderGraph->GetCachedDrawCalls().size();
+                if (m_gameCameraEnabled && m_gameRenderGraph && m_gameRenderGraph->HasCachedDrawCalls())
+                    totalDC += m_gameRenderGraph->GetCachedDrawCalls().size();
+                m_vkCore->PreallocateInstances(totalDC);
+            }
+
 #if INFENGINE_FRAME_PROFILE
             using ExClock = std::chrono::high_resolution_clock;
             auto exT0 = ExClock::now();
@@ -231,32 +242,39 @@ void InfRenderer::PreparePipeline()
             auto exT2 = ExClock::now();
 #endif
 
-            // ---- Game View: use cached camera VP from SubmitCulling ----
+            // ---- Game View: render whenever the graph and a game camera exist.
+            // Long scene loads can temporarily leave cached draw calls / camera VP
+            // unset for a frame; skipping Execute() in that window leaves the old
+            // scene's image stuck in the game render target until some other view
+            // rebuilds the cache. Fall back to live camera matrices instead.
             if (m_gameCameraEnabled && m_gameRenderGraph && m_gameRenderTarget && m_gameRenderTarget->IsReady()) {
-                if (m_gameRenderGraph->HasCachedDrawCalls() && m_gameRenderGraph->HasCachedCameraVP()) {
-                    // Swap in game-specific draw calls (no gizmos)
-                    m_vkCore->SetDrawCalls(&m_gameRenderGraph->GetCachedDrawCalls());
+                Camera *gameCam = FindGameCameraCached();
+                if (gameCam) {
+                    if (m_gameRenderGraph->HasCachedDrawCalls()) {
+                        m_vkCore->SetDrawCalls(&m_gameRenderGraph->GetCachedDrawCalls());
+                    } else {
+                        m_vkCore->SetDrawCalls(nullptr);
+                    }
 
-                    // Update UBO with game camera VP matrices cached during
-                    // SetupCameraProperties() → SubmitCulling() in the SRP pipeline.
-                    m_vkCore->CmdUpdateUniformBuffer(cmdBuf, m_gameRenderGraph->GetCachedView(),
-                                                     m_gameRenderGraph->GetCachedProj());
+                    glm::mat4 gameView = m_gameRenderGraph->HasCachedCameraVP() ? m_gameRenderGraph->GetCachedView()
+                                                                                : gameCam->GetViewMatrix();
+                    glm::mat4 gameProj = m_gameRenderGraph->HasCachedCameraVP() ? m_gameRenderGraph->GetCachedProj()
+                                                                                : gameCam->GetProjectionMatrix();
 
-                    // Override lighting UBO camera position for the game view.
+                    m_vkCore->CmdUpdateUniformBuffer(cmdBuf, gameView, gameProj);
+
                     {
-                        const glm::mat4 &gameView = m_gameRenderGraph->GetCachedView();
                         glm::mat4 invView = glm::inverse(gameView);
                         glm::vec3 gameCamPos(invView[3]);
                         m_vkCore->CmdUpdateLightingCameraPos(cmdBuf, gameCamPos);
                     }
 
-                    // Patch shadow VP data for the game camera.
                     if (m_hasGameShadowData) {
                         m_vkCore->CmdUpdateShadowDataForCamera(cmdBuf, m_gameShadowVPs.data(), m_gameShadowCascadeCount,
                                                                m_gameShadowSplits.data(), m_gameShadowMapResolution);
+                        m_vkCore->SetShadowCascadeVPOverride(m_gameShadowVPs.data(), m_gameShadowCascadeCount);
                     }
 
-                    // Set per-graph shadow descriptor (set 1) for game camera
                     m_vkCore->SetActiveShadowDescriptorSet(m_gameRenderGraph->GetPerViewDescriptorSet());
 #if INFENGINE_FRAME_PROFILE
                     auto exTg0 = ExClock::now();
@@ -265,10 +283,19 @@ void InfRenderer::PreparePipeline()
 #if INFENGINE_FRAME_PROFILE
                     auto exTg1 = ExClock::now();
 #endif
+                    // Clear cascade VP override after game view execution
+                    m_vkCore->SetShadowCascadeVPOverride(nullptr, 0);
                     m_gameRenderGraph->ResolveSceneMsaa(cmdBuf);
 #if INFENGINE_FRAME_PROFILE
                     auto exTg2 = ExClock::now();
 #endif
+
+                    // Restore lighting UBO shadow fields + shadow cascade UBOs
+                    // back to editor values so that (a) any post-view passes see
+                    // correct editor data, and (b) the buffer ends the frame with
+                    // the same data the next frame will write, eliminating visual
+                    // artefacts from cross-frame GPU pipeline overlap.
+                    m_vkCore->CmdRestoreEditorShadowData(cmdBuf);
 
                     if (m_sceneRenderGraph && m_sceneRenderGraph->HasCachedCameraVP()) {
                         m_vkCore->CmdUpdateUniformBuffer(cmdBuf, m_sceneRenderGraph->GetCachedView(),
@@ -364,10 +391,15 @@ void InfRenderer::DrawFrame()
     FrameProfiler _fp;
     static int _fpCounter = 0;
     static double _fpAccum[12] = {};
+    static double _srpSceneViewMs = 0;
+    static double _srpGameViewMs = 0;
     static SceneManager::FrameProfile _sceneAccum;
     static std::unordered_map<std::string, double> _guiAccum;
     _fp.stamp(); // [0] frame start
 #endif
+
+    // Invalidate per-frame game camera cache
+    m_gameCameraCacheValid = false;
 
     // Window events
     m_view->ProcessEvent();
@@ -438,11 +470,29 @@ void InfRenderer::DrawFrame()
     _fp.stamp(); // [5] after PrepareFrame (CollectRenderables)
 #endif
 
+    // Advance EnsureObjectBuffers frame counter so duplicate calls this frame are skipped.
+    if (m_vkCore) {
+        m_vkCore->AdvanceEnsureFrame();
+    }
+
     // Update camera from scene system (uses PrepareFrame results)
     bridge.UpdateCameraData(m_cameraPos, m_cameraLookAt, m_cameraUp);
 
     if (m_sceneRenderGraph) {
         int requested = m_sceneRenderGraph->GetRequestedMsaaSamples();
+        if (requested > 0 && requested != GetMsaaSamples()) {
+            SetMsaaSamples(requested);
+            return;
+        }
+    }
+
+    // Also check Game render graph for MSAA mismatch.  When the Scene panel
+    // is hidden, only the Game graph receives ApplyPythonGraph() with the
+    // new pipeline's requested MSAA, so the Scene-only check above never
+    // triggers.  Without this, Game's EnsureGraphBuilt() returns early
+    // every frame on the MSAA guard, leaving the Game RT stuck forever.
+    if (m_gameRenderGraph) {
+        int requested = m_gameRenderGraph->GetRequestedMsaaSamples();
         if (requested > 0 && requested != GetMsaaSamples()) {
             SetMsaaSamples(requested);
             return;
@@ -486,13 +536,19 @@ void InfRenderer::DrawFrame()
                 cameras.push_back(editorCam);
             }
 
+#if INFENGINE_FRAME_PROFILE
+            auto _srpT0 = std::chrono::high_resolution_clock::now();
+#endif
             m_renderPipeline->Render(ctx, cameras);
+#if INFENGINE_FRAME_PROFILE
+            auto _srpT1 = std::chrono::high_resolution_clock::now();
+            _srpSceneViewMs += std::chrono::duration<double, std::milli>(_srpT1 - _srpT0).count();
+#endif
         }
 
         // ---- Game View: use scene main camera (if enabled) ----
         if (m_gameCameraEnabled && m_gameRenderTarget && m_gameRenderTarget->IsReady() && m_gameRenderGraph) {
-            Camera *gameCam = FindGameCamera();
-
+            Camera *gameCam = FindGameCameraCached();
             if (gameCam) {
                 // Set aspect ratio BEFORE SetupCameraProperties() so the
                 // projection matrix snapshot matches the render target size.
@@ -512,7 +568,14 @@ void InfRenderer::DrawFrame()
                 std::vector<Camera *> gameCameras;
                 gameCameras.push_back(gameCam);
 
+#if INFENGINE_FRAME_PROFILE
+                auto _srpT2 = std::chrono::high_resolution_clock::now();
+#endif
                 m_renderPipeline->Render(gameCtx, gameCameras);
+#if INFENGINE_FRAME_PROFILE
+                auto _srpT3 = std::chrono::high_resolution_clock::now();
+                _srpGameViewMs += std::chrono::duration<double, std::milli>(_srpT3 - _srpT2).count();
+#endif
             }
         }
     } else {
@@ -619,6 +682,16 @@ void InfRenderer::DrawFrame()
     SceneManager::Instance().EndFrame();
 
     // ========================================================================
+    // Post-draw callback: scene loading / deferred tasks that must run
+    // AFTER GPU submission.  The Python callback pumps OS events itself
+    // (via engine.pump_events()) when performing heavy scene loads, so
+    // we no longer sandwich every frame with SDL_PumpEvents here.
+    // ========================================================================
+    if (m_postDrawCallback) {
+        m_postDrawCallback();
+    }
+
+    // ========================================================================
     // Unified Frame Profiler output: print every 120 frames
     // ========================================================================
 #if INFENGINE_FRAME_PROFILE
@@ -674,6 +747,7 @@ void InfRenderer::DrawFrame()
                 << " | UI=" << (_fpAccum[4] / kWindow) << "ms"
                 << " | Prepare=" << (_fpAccum[5] / kWindow) << "ms"
                 << " | Render=" << (_fpAccum[6] / kWindow) << "ms"
+                << "(SV=" << (_srpSceneViewMs / kWindow) << "ms GV=" << (_srpGameViewMs / kWindow) << "ms)"
                 << " | Cleanup=" << (_fpAccum[7] / kWindow) << "ms"
                 << " | Lighting=" << (_fpAccum[8] / kWindow) << "ms"
                 << " | Graph+UBO=" << (_fpAccum[9] / kWindow) << "ms"
@@ -688,10 +762,10 @@ void InfRenderer::DrawFrame()
                     double n = static_cast<double>(drawN);
                     const auto rgProfile = infengine::vk::RenderGraph::GetExecuteProfileSnapshot();
                     const auto topPassProfiles = infengine::vk::RenderGraph::GetTopCallbackProfiles(6);
-                    uint64_t filteredCalls = 0, filteredEligible = 0, filteredIssued = 0;
-                    uint64_t shadowCalls = 0, shadowEligible = 0, shadowIssued = 0;
-                    m_vkCore->GetDrawSubCounters(filteredCalls, filteredEligible, filteredIssued, shadowCalls,
-                                                 shadowEligible, shadowIssued);
+                    uint64_t filteredCalls = 0, filteredEligible = 0, filteredIssued = 0, filteredActualDraws = 0;
+                    uint64_t shadowCalls = 0, shadowEligible = 0, shadowIssued = 0, shadowActualDraws = 0;
+                    m_vkCore->GetDrawSubCounters(filteredCalls, filteredEligible, filteredIssued, filteredActualDraws,
+                                                 shadowCalls, shadowEligible, shadowIssued, shadowActualDraws);
                     oss << "\n  DrawFrame: Acquire=" << (drawSub[0] / n) << "ms"
                         << " Record=" << (drawSub[1] / n) << "ms"
                         << " Submit=" << (drawSub[2] / n) << "ms"
@@ -710,13 +784,18 @@ void InfRenderer::DrawFrame()
                         << " issued/call="
                         << (filteredCalls ? static_cast<double>(filteredIssued) / static_cast<double>(filteredCalls)
                                           : 0.0)
+                        << " vkDraws/frame=" << (static_cast<double>(filteredActualDraws) / n)
                         << "\n    Shadow: total=" << (drawSub[12] / n) << "ms"
                         << " filter=" << (drawSub[13] / n) << "ms"
-                        << " draw=" << (drawSub[14] / n) << "ms"
+                        << " sort=" << (drawSub[15] / n) << "ms"
+                        << " cull=" << (drawSub[16] / n) << "ms"
+                        << " upload=" << (drawSub[17] / n) << "ms"
+                        << " batch=" << (drawSub[18] / n) << "ms"
                         << " calls/frame=" << (static_cast<double>(shadowCalls) / n) << " eligible/call="
                         << (shadowCalls ? static_cast<double>(shadowEligible) / static_cast<double>(shadowCalls) : 0.0)
                         << " issued/call="
                         << (shadowCalls ? static_cast<double>(shadowIssued) / static_cast<double>(shadowCalls) : 0.0)
+                        << " vkDraws/frame=" << (static_cast<double>(shadowActualDraws) / n)
                         << "\n    RenderGraph: barrier="
                         << (rgProfile.executeCalls ? rgProfile.barrierMs / static_cast<double>(rgProfile.executeCalls)
                                                    : 0.0)
@@ -795,6 +874,8 @@ void InfRenderer::DrawFrame()
             for (double &value : _fpAccum) {
                 value = 0.0;
             }
+            _srpSceneViewMs = 0;
+            _srpGameViewMs = 0;
             _sceneAccum = {};
             _guiAccum.clear();
             if (m_vkCore) {
@@ -834,6 +915,10 @@ void InfRenderer::WaitForGpuIdle()
     // still being referenced by previously submitted command buffers.
     m_vkCore->GetDeviceContext().WaitIdle();
     m_vkCore->FlushDeletionQueue();
+
+    // Pump the OS message queue so Windows does not flag the application
+    // as "Not Responding" during long GPU drains (scene switch, MSAA change).
+    SDL_PumpEvents();
 }
 
 void InfRenderer::LoadShader(const char *name, const std::vector<char> &code, const char *type)
@@ -1097,7 +1182,7 @@ void InfRenderer::UpdateSceneLighting()
     // editor camera's frustum shape.
     m_hasGameShadowData = false;
     if (m_gameCameraEnabled) {
-        Camera *gameCam = FindGameCamera();
+        Camera *gameCam = FindGameCameraCached();
         if (gameCam) {
             SceneLightCollector gameCollector;
             gameCollector.CollectLights(activeScene, cameraPos);
@@ -1357,30 +1442,28 @@ Camera *InfRenderer::FindGameCamera()
     return activeScene->FindGameCamera(editorCam);
 }
 
+Camera *InfRenderer::FindGameCameraCached()
+{
+    if (m_gameCameraCacheValid)
+        return m_cachedGameCamera;
+    m_cachedGameCamera = FindGameCamera();
+    m_gameCameraCacheValid = true;
+    return m_cachedGameCamera;
+}
+
 uint64_t InfRenderer::GetGameTextureId() const
 {
     if (m_gameRenderTarget && m_gameRenderTarget->IsReady()) {
-        Scene *activeScene = SceneManager::Instance().GetActiveScene();
-        if (!activeScene)
-            return 0;
-
-        // Fast path: cached main camera is already known
-        if (activeScene->GetMainCamera())
+        // Use the per-frame cached camera instead of re-scanning the scene.
+        // The cache is populated by FindGameCameraCached() during DrawFrame.
+        if (m_gameCameraCacheValid && m_cachedGameCamera)
             return m_gameRenderTarget->GetImGuiTextureId();
 
-        // Slow path: main camera hasn't been cached yet (first frame after
-        // a Camera component was added).  Do a lightweight const-safe scan
-        // for any active, enabled Camera that is NOT the editor camera to
-        // avoid a one-frame "No Camera" flicker.
-        Camera *editorCam = SceneManager::Instance().GetEditorCameraController().GetCamera();
-        auto cameraObjects = activeScene->FindObjectsWithComponent<Camera>();
-        for (auto *obj : cameraObjects) {
-            if (!obj->IsActiveInHierarchy())
-                continue;
-            Camera *c = obj->GetComponent<Camera>();
-            if (c && c->IsEnabled() && c != editorCam)
-                return m_gameRenderTarget->GetImGuiTextureId();
-        }
+        // Fallback: check the scene's cached main camera (O(1) pointer check)
+        Scene *activeScene = SceneManager::Instance().GetActiveScene();
+        if (activeScene && activeScene->GetMainCamera())
+            return m_gameRenderTarget->GetImGuiTextureId();
+
         return 0;
     }
     return 0;
@@ -1416,6 +1499,7 @@ void InfRenderer::ResizeGameRenderTarget(uint32_t width, uint32_t height)
             m_screenUIRenderer->Initialize(m_vkCore->GetDevice(), m_vkCore->GetDeviceContext().GetVmaAllocator(),
                                            m_gameRenderTarget->GetColorFormat(),
                                            m_gameRenderTarget->GetMsaaSampleCount());
+            m_screenUIRenderer->SetDeletionQueue(&m_vkCore->GetDeletionQueue());
         }
         m_gameRenderGraph->SetScreenUIRenderer(m_screenUIRenderer.get());
 
@@ -1520,6 +1604,7 @@ void InfRenderer::SetMsaaSamples(int samples)
             m_screenUIRenderer->Initialize(m_vkCore->GetDevice(), m_vkCore->GetDeviceContext().GetVmaAllocator(),
                                            m_gameRenderTarget->GetColorFormat(),
                                            m_gameRenderTarget->GetMsaaSampleCount());
+            m_screenUIRenderer->SetDeletionQueue(&m_vkCore->GetDeletionQueue());
             if (m_gameRenderGraph) {
                 m_gameRenderGraph->SetScreenUIRenderer(m_screenUIRenderer.get());
             }

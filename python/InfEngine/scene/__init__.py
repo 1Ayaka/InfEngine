@@ -296,12 +296,14 @@ class SceneManager:
         sfm = SceneFileManager.instance()
         if sfm:
             if SceneManager._is_in_play_mode():
-                # Play-mode runtime load: call _do_open_scene() directly.
-                # process_pending_load() already deferred one frame to avoid
-                # invalidating C++ iterators.  Bypassing open_scene() avoids
-                # a second deferral (via _begin_deferred_open) that requires
-                # menu_bar polling — which is absent in player mode.
-                return sfm._do_open_scene(path)
+                # Play-mode runtime load: reuse SceneFileManager's standard
+                # deferred path instead of bypassing straight to _do_open_scene().
+                # process_pending_load() already runs outside C++ iteration, so
+                # we can immediately consume the deferred request here without
+                # depending on menu_bar polling.
+                sfm._begin_deferred_open(path)
+                sfm.poll_deferred_load()
+                return os.path.abspath(path) == sfm.current_scene_path
             return sfm.open_scene(path)
 
         # Fallback — direct C++ load

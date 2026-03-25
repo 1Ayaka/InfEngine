@@ -982,13 +982,13 @@ std::shared_ptr<InfMaterial> InfMaterial::CreateComponentGizmoIconMaterial()
 std::shared_ptr<InfMaterial> InfMaterial::CreateComponentGizmoCameraIconMaterial()
 {
     return CreateTexturedComponentGizmoIconMaterial("ComponentGizmoCameraIconMaterial",
-                                                    "python/InfEngine/resources/icons/gizmo_camera.png");
+                                                    "icons/gizmo_camera.png");
 }
 
 std::shared_ptr<InfMaterial> InfMaterial::CreateComponentGizmoLightIconMaterial()
 {
     return CreateTexturedComponentGizmoIconMaterial("ComponentGizmoLightIconMaterial",
-                                                    "python/InfEngine/resources/icons/gizmo_light.png");
+                                                    "icons/gizmo_light.png");
 }
 
 std::shared_ptr<InfMaterial> InfMaterial::CreateSkyboxProceduralMaterial()

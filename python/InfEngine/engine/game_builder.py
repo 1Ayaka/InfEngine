@@ -31,12 +31,32 @@ import os
 import py_compile
 import shutil
 import struct
+import subprocess
 import sys
 import threading
+import time
 from typing import Callable, Dict, List, Optional
 
 from InfEngine.debug import Debug
+from InfEngine.engine.i18n import t
 from InfEngine.engine.nuitka_builder import NuitkaBuilder
+
+
+def _ensure_video_splash_packages() -> None:
+    try:
+        import imageio.v3  # noqa: F401
+        import av  # noqa: F401
+        return
+    except ImportError:
+        Debug.log_internal(
+            "Video splash dependencies missing — installing imageio and av automatically..."
+        )
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "imageio", "av", "--quiet"],
+        )
+
+    import imageio.v3  # noqa: F401
+    import av  # noqa: F401
 
 
 class _BuildCancelled(Exception):
@@ -80,6 +100,8 @@ class GameBuilder:
         cancel_event: Optional[threading.Event] = None,
     ) -> str:
         """Run the full build pipeline.  Returns the final output directory."""
+
+        build_start = time.perf_counter()
 
         def _p(msg: str, pct: float):
             if cancel_event is not None and cancel_event.is_set():
@@ -128,6 +150,13 @@ class GameBuilder:
         self._cleanup_temp(boot_script)
 
         _p("构建完成 Build complete!", 1.0)
+        elapsed_seconds = time.perf_counter() - build_start
+        Debug.log(
+            t("build.completed_log").format(
+                path=final_dir,
+                seconds=elapsed_seconds,
+            )
+        )
         return final_dir
 
     # ------------------------------------------------------------------
@@ -523,12 +552,13 @@ except Exception as _exc:
             import cv2
         except ImportError:
             try:
+                _ensure_video_splash_packages()
                 self._extract_with_imageio(video_path, output_path)
                 return
             except ImportError:
                 raise RuntimeError(
-                    "Video splash requires opencv-python or imageio[ffmpeg]. "
-                    "Install: pip install opencv-python-headless"
+                    "Video splash requires opencv-python or imageio+av. "
+                    "Install: pip install opencv-python-headless  or  pip install imageio av"
                 )
 
         cap = cv2.VideoCapture(video_path)

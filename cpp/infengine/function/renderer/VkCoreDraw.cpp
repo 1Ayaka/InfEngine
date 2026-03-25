@@ -407,7 +407,34 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
     stageStart = stageNow;
 #endif
 
-    // ---- Draw loop ----
+    // ---- Upload instance model matrices to SSBO (set 2, binding 1) ----
+    // Reset per-frame write offset on new frame
+    if (m_lastInstanceFrame != m_currentFrame) {
+        m_instanceWriteOffset = 0;
+        m_lastInstanceFrame = m_currentFrame;
+    }
+
+    const uint32_t frameIndex = m_currentFrame % m_maxFramesInFlight;
+    const size_t totalEligible = m_eligibleScratch.size();
+    const uint32_t writeBase = m_instanceWriteOffset;
+
+    if (totalEligible > 0 && frameIndex < m_instanceBuffers.size()) {
+        EnsureInstanceBufferCapacity(frameIndex, writeBase + totalEligible);
+        auto &instFrame = m_instanceBuffers[frameIndex];
+        if (instFrame.buffer) {
+            void *mapped = instFrame.buffer->Map();
+            if (mapped) {
+                glm::mat4 *matrices = static_cast<glm::mat4 *>(mapped);
+                for (size_t i = 0; i < totalEligible; ++i) {
+                    matrices[writeBase + i] = m_eligibleScratch[i].dc->worldMatrix;
+                }
+                instFrame.buffer->Unmap();
+            }
+        }
+        m_instanceWriteOffset += static_cast<uint32_t>(totalEligible);
+    }
+
+    // ---- Draw loop with instanced batching ----
     VkPipeline currentPipeline = VK_NULL_HANDLE;
     VkPipelineLayout currentLayout = VK_NULL_HANDLE;
     VkDescriptorSet currentDescriptorSet = VK_NULL_HANDLE;
@@ -415,7 +442,42 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
     VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
     uint64_t issuedDraws = 0;
 
-    for (const auto &entry : m_eligibleScratch) {
+    // Batch accumulation: consecutive entries sharing (pipeline, descriptorSet, VB, submesh) are
+    // emitted as a single vkCmdDrawIndexed with instanceCount > 1.
+    const bool allowBatching = (sortMode != "back_to_front");
+
+    size_t batchFirstInstance = 0;
+    uint32_t batchInstanceCount = 0;
+    uint32_t batchIndexStart = 0;
+    uint32_t batchIndexCount = 0;
+    int32_t batchVertexStart = 0;
+    VkPipelineLayout batchPipelineLayout = VK_NULL_HANDLE;
+
+    auto emitBatch = [&]() {
+        if (batchInstanceCount == 0)
+            return;
+        // Push constants for backward compatibility (non-template shaders that still read pc.model)
+        struct PushConstants
+        {
+            glm::mat4 model;
+            glm::mat4 normalMat;
+        };
+        PushConstants pushData;
+        pushData.model = m_eligibleScratch[batchFirstInstance].dc->worldMatrix;
+        pushData.normalMat = glm::mat4(1.0f); // normalMat computed in shader from SSBO model
+        vkCmdPushConstants(cmdBuf, batchPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants),
+                           &pushData);
+        vkCmdDrawIndexed(cmdBuf, batchIndexCount, batchInstanceCount, batchIndexStart, batchVertexStart,
+                         writeBase + static_cast<uint32_t>(batchFirstInstance));
+        issuedDraws += batchInstanceCount;
+#if INFENGINE_FRAME_PROFILE
+        ++m_drawFilteredActualDraws;
+#endif
+        batchInstanceCount = 0;
+    };
+
+    for (size_t idx = 0; idx < totalEligible; ++idx) {
+        const auto &entry = m_eligibleScratch[idx];
         const DrawCall &dc = *entry.dc;
 
         // Material already resolved in filter loop — use directly
@@ -459,12 +521,54 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
                 matRaw = defaultMaterial.get();
             }
             if (pipeline == VK_NULL_HANDLE) {
+                emitBatch();
                 continue;
             }
         }
 
         VkDescriptorSet descriptorSet = matRaw->GetPassDescriptorSet(ShaderCompileTarget::Forward);
 
+        if (descriptorSet == VK_NULL_HANDLE) {
+            static int warnCount = 0;
+            if (warnCount++ < 10) {
+                INFLOG_WARN("[DrawSceneFiltered] descriptorSet=NULL for material '", matRaw->GetName(),
+                            "' queue=", matRaw->GetRenderQueue(),
+                            " pipeline=", (pipeline != VK_NULL_HANDLE ? "OK" : "NULL"), " vert='",
+                            matRaw->GetVertShaderName(), "' frag='", matRaw->GetFragShaderName(), "'");
+            }
+            emitBatch();
+            continue;
+        }
+
+        // Check GPU buffers for this entry
+        const auto &bufIt = entry.bufIt;
+        if (bufIt == m_perObjectBuffers.end() || !bufIt->second.vertexBuffer || !bufIt->second.indexBuffer) {
+            static int bufWarnCount = 0;
+            if (bufWarnCount++ < 10) {
+                INFLOG_WARN("[DrawSceneFiltered] no GPU buffers for objectId=", dc.objectId, " material='",
+                            matRaw->GetName(), "' queue=", matRaw->GetRenderQueue());
+            }
+            emitBatch();
+            continue;
+        }
+
+        VkBuffer vb = bufIt->second.vertexBuffer->GetBuffer();
+
+        // Check if this entry can extend the current batch
+        bool canExtendBatch =
+            allowBatching && batchInstanceCount > 0 && pipeline == currentPipeline &&
+            descriptorSet == currentDescriptorSet && matRaw == currentMaterialRaw && vb == currentVertexBuffer &&
+            dc.indexStart == batchIndexStart && dc.indexCount == batchIndexCount && dc.vertexStart == batchVertexStart;
+
+        if (canExtendBatch) {
+            ++batchInstanceCount;
+            continue;
+        }
+
+        // Emit previous batch before changing state
+        emitBatch();
+
+        // ---- Bind new state ----
         if (pipeline != currentPipeline) {
             vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             currentPipeline = pipeline;
@@ -477,17 +581,6 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
             currentDescriptorSet = VK_NULL_HANDLE;
         }
 
-        if (descriptorSet == VK_NULL_HANDLE) {
-            static int warnCount = 0;
-            if (warnCount++ < 10) {
-                INFLOG_WARN("[DrawSceneFiltered] descriptorSet=NULL for material '", matRaw->GetName(),
-                            "' queue=", matRaw->GetRenderQueue(),
-                            " pipeline=", (pipeline != VK_NULL_HANDLE ? "OK" : "NULL"), " vert='",
-                            matRaw->GetVertShaderName(), "' frag='", matRaw->GetFragShaderName(), "'");
-            }
-            continue;
-        }
-
         if (descriptorSet != currentDescriptorSet || pipelineLayout != currentLayout) {
             vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0,
                                     nullptr);
@@ -497,11 +590,6 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
             ShaderProgram *program = matRaw->GetPassShaderProgram(ShaderCompileTarget::Forward);
 
             if (m_activeShadowDescSet != VK_NULL_HANDLE) {
-                // After introducing globals at set 2, pipeline layouts may now
-                // contain an auto-created empty gap layout at set 1. Only bind
-                // the per-view shadow descriptor when the shader actually
-                // declares set 1, otherwise Vulkan rejects the descriptor set as
-                // incompatible with the empty layout.
                 if (program && program->HasDeclaredDescriptorSet(1)) {
                     vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1,
                                             &m_activeShadowDescSet, 0, nullptr);
@@ -509,7 +597,6 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
             }
 
             if (program && program->HasDeclaredDescriptorSet(2)) {
-                const uint32_t frameIndex = m_currentFrame % m_maxFramesInFlight;
                 if (frameIndex < m_globalsDescSets.size()) {
                     VkDescriptorSet globalsDescSet = m_globalsDescSets[frameIndex];
                     if (globalsDescSet != VK_NULL_HANDLE) {
@@ -520,53 +607,25 @@ void InfVkCoreModular::DrawSceneFiltered(VkCommandBuffer cmdBuf, uint32_t width,
             }
         }
 
-        struct PushConstants
-        {
-            glm::mat4 model;
-            glm::mat4 normalMat;
-        };
-
-        PushConstants pushData;
-        pushData.model = dc.worldMatrix;
-        glm::mat3 normalMat3 = glm::transpose(glm::inverse(glm::mat3(dc.worldMatrix)));
-        pushData.normalMat = glm::mat4(normalMat3);
-
-        vkCmdPushConstants(cmdBuf, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &pushData);
-
-        // Use pre-cached buffer iterator from filter loop
-        const auto &bufIt = entry.bufIt;
-        if (bufIt != m_perObjectBuffers.end() && bufIt->second.vertexBuffer && bufIt->second.indexBuffer) {
-            VkBuffer vb = bufIt->second.vertexBuffer->GetBuffer();
-            if (vb != currentVertexBuffer) {
-                VkBuffer vertBuffers[] = {vb};
-                VkDeviceSize vbOffsets[] = {0};
-                vkCmdBindVertexBuffers(cmdBuf, 0, 1, vertBuffers, vbOffsets);
-                vkCmdBindIndexBuffer(cmdBuf, bufIt->second.indexBuffer->GetBuffer(), 0, VK_INDEX_TYPE_UINT32);
-                currentVertexBuffer = vb;
-            }
-            vkCmdDrawIndexed(cmdBuf, dc.indexCount, 1, dc.indexStart, dc.vertexStart, 0);
-            ++issuedDraws;
-
-            // One-shot diagnostic: log when an icon draw call is actually issued
-            {
-                static int s_iconDrawDiag = 0;
-                if (s_iconDrawDiag < 10 && matRaw->GetName().find("Gizmo") != std::string::npos) {
-                    INFLOG_INFO("[IconDiag] DRAW ISSUED: mat='", matRaw->GetName(),
-                                "' objId=", dc.objectId,
-                                " idxCount=", dc.indexCount,
-                                " vbuf=", (void*)bufIt->second.vertexBuffer->GetBuffer(),
-                                " ibuf=", (void*)bufIt->second.indexBuffer->GetBuffer());
-                    ++s_iconDrawDiag;
-                }
-            }
-        } else {
-            static int bufWarnCount = 0;
-            if (bufWarnCount++ < 10) {
-                INFLOG_WARN("[DrawSceneFiltered] no GPU buffers for objectId=", dc.objectId, " material='",
-                            matRaw->GetName(), "' queue=", matRaw->GetRenderQueue());
-            }
+        if (vb != currentVertexBuffer) {
+            VkBuffer vertBuffers[] = {vb};
+            VkDeviceSize vbOffsets[] = {0};
+            vkCmdBindVertexBuffers(cmdBuf, 0, 1, vertBuffers, vbOffsets);
+            vkCmdBindIndexBuffer(cmdBuf, bufIt->second.indexBuffer->GetBuffer(), 0, VK_INDEX_TYPE_UINT32);
+            currentVertexBuffer = vb;
         }
+
+        // Start new batch
+        batchFirstInstance = idx;
+        batchInstanceCount = 1;
+        batchIndexStart = dc.indexStart;
+        batchIndexCount = dc.indexCount;
+        batchVertexStart = dc.vertexStart;
+        batchPipelineLayout = pipelineLayout;
     }
+
+    // Flush final batch
+    emitBatch();
 
 #if INFENGINE_FRAME_PROFILE
     stageNow = Clock::now();
@@ -665,14 +724,49 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
 #if INFENGINE_FRAME_PROFILE
         m_drawSubMs[12] += std::chrono::duration<double, std::milli>(Clock::now() - totalStart).count();
 #endif
+        return;
     }
+
+    // Sort shadow draw scratch by (pipeline, VB, submesh) for instanced batching
+    std::sort(m_shadowDrawScratch.begin(), m_shadowDrawScratch.end(),
+              [](const ShadowDraw &a, const ShadowDraw &b) {
+                  if (a.shadowPipeline != b.shadowPipeline)
+                      return a.shadowPipeline < b.shadowPipeline;
+                  VkBuffer va = a.bufIt->second.vertexBuffer->GetBuffer();
+                  VkBuffer vb_b = b.bufIt->second.vertexBuffer->GetBuffer();
+                  if (va != vb_b)
+                      return va < vb_b;
+                  if (a.dc->indexStart != b.dc->indexStart)
+                      return a.dc->indexStart < b.dc->indexStart;
+                  return a.dc->indexCount < b.dc->indexCount;
+              });
+
+#if INFENGINE_FRAME_PROFILE
+    stageNow = Clock::now();
+    m_drawSubMs[15] += std::chrono::duration<double, std::milli>(stageNow - stageStart).count();
+    stageStart = stageNow;
+#endif
 
     uint64_t issuedDraws = 0;
 
     // Pre-extract frustums for all cascades (for per-cascade AABB culling)
+    // Use override VPs when set (game camera), otherwise fall back to m_lightCollector (editor camera).
     Frustum cascadeFrustums[NUM_SHADOW_CASCADES];
     for (uint32_t ci = 0; ci < cascadeCount && ci < NUM_SHADOW_CASCADES; ++ci) {
-        cascadeFrustums[ci].ExtractFromMatrix(m_lightCollector.GetShadowLightVP(ci));
+        if (m_shadowCascadeVPOverride && ci < m_shadowCascadeVPOverrideCount) {
+            cascadeFrustums[ci].ExtractFromMatrix(m_shadowCascadeVPOverride[ci]);
+        } else {
+            cascadeFrustums[ci].ExtractFromMatrix(m_lightCollector.GetShadowLightVP(ci));
+        }
+    }
+
+    // Bind globals descriptor set (set 1) with instance SSBO — once for all cascades
+    if (frameIndex < m_globalsDescSets.size()) {
+        VkDescriptorSet globalsDescSet = m_globalsDescSets[frameIndex];
+        if (globalsDescSet != VK_NULL_HANDLE) {
+            vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipelineLayout, 1, 1,
+                                    &globalsDescSet, 0, nullptr);
+        }
     }
 
     for (uint32_t ci = 0; ci < cascadeCount; ++ci) {
@@ -698,38 +792,102 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
         scissor.extent = {tileW, tileH};
         vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
-        // Bind per-cascade descriptor set
+        // Bind per-cascade descriptor set (set 0)
         VkDescriptorSet cascadeDescSet = m_shadowDescSets[descIdx];
         vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipelineLayout, 0, 1, &cascadeDescSet,
                                 0, nullptr);
 
         const Frustum &cascadeFrustum = cascadeFrustums[ci];
         VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
-        for (const auto &sd : m_shadowDrawScratch) {
-            // Per-cascade frustum culling: skip objects outside this cascade's light-space volume
+
+        // Per-cascade frustum cull into a compact index list, then upload
+        // model matrices for visible objects and batch by (pipeline, VB, submesh).
+        m_shadowCascadeVisible.clear();
+        m_shadowCascadeVisible.reserve(m_shadowDrawScratch.size());
+        for (size_t si = 0; si < m_shadowDrawScratch.size(); ++si) {
+            const auto &sd = m_shadowDrawScratch[si];
             if (sd.worldBounds.IsValid() && !cascadeFrustum.IntersectsAABB(sd.worldBounds))
                 continue;
+            m_shadowCascadeVisible.push_back(static_cast<uint32_t>(si));
+        }
 
-            // Bind per-material shadow pipeline (or global fallback)
+#if INFENGINE_FRAME_PROFILE
+        stageNow = Clock::now();
+        m_drawSubMs[16] += std::chrono::duration<double, std::milli>(stageNow - stageStart).count();
+        stageStart = stageNow;
+#endif
+
+        const uint32_t visibleCount = static_cast<uint32_t>(m_shadowCascadeVisible.size());
+        if (visibleCount == 0)
+            continue;
+
+        // Upload model matrices for this cascade's visible objects into the shared SSBO
+        const uint32_t writeBase = m_instanceWriteOffset;
+        EnsureInstanceBufferCapacity(frameIndex, writeBase + visibleCount);
+
+        auto &instFrame = m_instanceBuffers[frameIndex];
+        void *mapped = instFrame.buffer->Map();
+        glm::mat4 *matrices = static_cast<glm::mat4 *>(mapped);
+        for (uint32_t vi = 0; vi < visibleCount; ++vi) {
+            matrices[writeBase + vi] = m_shadowDrawScratch[m_shadowCascadeVisible[vi]].dc->worldMatrix;
+        }
+        instFrame.buffer->Unmap();
+        m_instanceWriteOffset += visibleCount;
+
+#if INFENGINE_FRAME_PROFILE
+        stageNow = Clock::now();
+        m_drawSubMs[17] += std::chrono::duration<double, std::milli>(stageNow - stageStart).count();
+        stageStart = stageNow;
+#endif
+
+        // Batch accumulation: consecutive visible entries sharing (pipeline, VB, submesh)
+        // are emitted as a single instanced draw call.
+        size_t batchStart = 0;
+        uint32_t batchCount = 0;
+        VkPipeline batchPipeline = VK_NULL_HANDLE;
+        uint32_t batchIdxStart = 0;
+        uint32_t batchIdxCount = 0;
+        int32_t batchVtxStart = 0;
+
+        auto emitShadowBatch = [&]() {
+            if (batchCount == 0)
+                return;
+            struct PushData { glm::mat4 model; glm::mat4 normalMat; } pushData;
+            pushData.model = m_shadowDrawScratch[m_shadowCascadeVisible[batchStart]].dc->worldMatrix;
+            pushData.normalMat = glm::mat4(1.0f);
+            vkCmdPushConstants(cmdBuf, m_shadowPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushData),
+                               &pushData);
+            vkCmdDrawIndexed(cmdBuf, batchIdxCount, batchCount, batchIdxStart, batchVtxStart,
+                             writeBase + static_cast<uint32_t>(batchStart));
+            issuedDraws += batchCount;
+#if INFENGINE_FRAME_PROFILE
+            ++m_drawShadowActualDraws;
+#endif
+            batchCount = 0;
+        };
+
+        for (uint32_t vi = 0; vi < visibleCount; ++vi) {
+            const auto &sd = m_shadowDrawScratch[m_shadowCascadeVisible[vi]];
+
+            VkBuffer vb = sd.bufIt->second.vertexBuffer->GetBuffer();
+
+            bool canExtend = batchCount > 0 && sd.shadowPipeline == batchPipeline && vb == currentVertexBuffer &&
+                             sd.dc->indexStart == batchIdxStart && sd.dc->indexCount == batchIdxCount &&
+                             sd.dc->vertexStart == batchVtxStart;
+
+            if (canExtend) {
+                ++batchCount;
+                continue;
+            }
+
+            emitShadowBatch();
+
+            // Bind per-material shadow pipeline if changed
             if (sd.shadowPipeline != lastBoundPipeline) {
                 vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, sd.shadowPipeline);
                 lastBoundPipeline = sd.shadowPipeline;
             }
 
-            struct PushData
-            {
-                glm::mat4 model;
-                glm::mat4 normalMat;
-            } pushData;
-            pushData.model = sd.dc->worldMatrix;
-            // Shadow pass only writes depth — normalMat is unused by the shader.
-            // Skip the expensive glm::inverse() computation (was 4000+ calls/frame).
-            pushData.normalMat = glm::mat4(1.0f);
-
-            vkCmdPushConstants(cmdBuf, m_shadowPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushData),
-                               &pushData);
-
-            VkBuffer vb = sd.bufIt->second.vertexBuffer->GetBuffer();
             if (vb != currentVertexBuffer) {
                 VkDeviceSize offsets[] = {0};
                 vkCmdBindVertexBuffers(cmdBuf, 0, 1, &vb, offsets);
@@ -737,14 +895,26 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
                 currentVertexBuffer = vb;
             }
 
-            vkCmdDrawIndexed(cmdBuf, sd.dc->indexCount, 1, sd.dc->indexStart, sd.dc->vertexStart, 0);
-            ++issuedDraws;
+            batchStart = vi;
+            batchCount = 1;
+            batchPipeline = sd.shadowPipeline;
+            batchIdxStart = sd.dc->indexStart;
+            batchIdxCount = sd.dc->indexCount;
+            batchVtxStart = sd.dc->vertexStart;
         }
+
+        emitShadowBatch();
+
+#if INFENGINE_FRAME_PROFILE
+        stageNow = Clock::now();
+        m_drawSubMs[18] += std::chrono::duration<double, std::milli>(stageNow - stageStart).count();
+        stageStart = stageNow;
+#endif
     }
 
 #if INFENGINE_FRAME_PROFILE
     stageNow = Clock::now();
-    m_drawSubMs[14] += std::chrono::duration<double, std::milli>(stageNow - stageStart).count();
+    m_drawSubMs[14] += std::chrono::duration<double, std::milli>(stageNow - totalStart).count();
     m_drawSubMs[12] += std::chrono::duration<double, std::milli>(stageNow - totalStart).count();
     m_drawShadowIssued += issuedDraws;
 #endif
@@ -918,16 +1088,23 @@ bool InfVkCoreModular::EnsureShadowPipeline(VkRenderPass /*compatibleRenderPass*
     }
 
     // --- Create shadow pipeline layout (shared by all per-material shadow pipelines) ---
+    // Set 0 = shadow UBO (per-cascade), set 1 = globals (UBO + instance SSBO)
+    if (m_globalsDescSetLayout == VK_NULL_HANDLE) {
+        INFLOG_ERROR("EnsureShadowPipeline: m_globalsDescSetLayout is null — globals not yet initialized");
+        return false;
+    }
     if (m_shadowPipelineLayout == VK_NULL_HANDLE) {
         VkPushConstantRange pushRange{};
         pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         pushRange.offset = 0;
         pushRange.size = sizeof(glm::mat4) * 2; // model + normalMat
 
+        VkDescriptorSetLayout setLayouts[2] = {m_shadowDescSetLayout, m_globalsDescSetLayout};
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &m_shadowDescSetLayout;
+        pipelineLayoutInfo.setLayoutCount = 2;
+        pipelineLayoutInfo.pSetLayouts = setLayouts;
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
 
@@ -1015,12 +1192,33 @@ void InfVkCoreModular::EnsureObjectBuffers(uint64_t objectId, const std::vector<
     if (vertices.empty() || indices.empty())
         return;
 
-    const SharedMeshKey sharedKey{vertices.data(), indices.data()};
-
     auto objectIt = m_perObjectBuffers.find(objectId);
     if (objectIt != m_perObjectBuffers.end() && !forceUpdate) {
-        if (objectIt->second.sharedKey == sharedKey && objectIt->second.vertexCount == vertices.size() &&
+        // Frame-stamp dedup: if already ensured this frame, skip entirely
+        if (objectIt->second.ensuredOnFrame == m_ensureFrameCounter) {
+            return;
+        }
+        // Fast path: if data pointers AND sizes match, content hasn't changed
+        if (objectIt->second.lastVertexPtr == vertices.data() &&
+            objectIt->second.lastIndexPtr == indices.data() &&
+            objectIt->second.vertexCount == vertices.size() &&
             objectIt->second.indexCount == indices.size()) {
+            objectIt->second.ensuredOnFrame = m_ensureFrameCounter;
+            return;
+        }
+    }
+
+    // Slow path: compute content hash for deduplication
+    const size_t vtxBytes = vertices.size() * sizeof(Vertex);
+    const size_t idxBytes = indices.size() * sizeof(uint32_t);
+    const size_t contentHash = HashMeshContent(vertices.data(), vtxBytes, indices.data(), idxBytes);
+    const SharedMeshKey sharedKey{contentHash, vertices.size(), indices.size()};
+
+    // Check if object already maps to this exact content (pointer changed but content same)
+    if (objectIt != m_perObjectBuffers.end() && !forceUpdate) {
+        if (objectIt->second.sharedKey == sharedKey) {
+            objectIt->second.lastVertexPtr = vertices.data();
+            objectIt->second.lastIndexPtr = indices.data();
             return;
         }
     }
@@ -1032,6 +1230,12 @@ void InfVkCoreModular::EnsureObjectBuffers(uint64_t objectId, const std::vector<
                               !sharedIt->second.indexBuffer);
 
     if (needsCreate) {
+        SharedMeshBuffers oldSharedBuffers;
+        const bool replacingExistingSharedBuffers = (sharedIt != m_sharedMeshBuffers.end());
+        if (replacingExistingSharedBuffers) {
+            oldSharedBuffers = sharedIt->second;
+        }
+
         SharedMeshBuffers sharedBuffers;
         sharedBuffers.vertexBuffer = std::shared_ptr<vk::VkBufferHandle>(
             m_resourceManager.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(Vertex)).release());
@@ -1039,7 +1243,23 @@ void InfVkCoreModular::EnsureObjectBuffers(uint64_t objectId, const std::vector<
             m_resourceManager.CreateIndexBuffer(indices.data(), indices.size() * sizeof(uint32_t)).release());
         sharedBuffers.vertexCount = vertices.size();
         sharedBuffers.indexCount = indices.size();
-        sharedIt = m_sharedMeshBuffers.insert_or_assign(sharedKey, std::move(sharedBuffers)).first;
+
+        if (replacingExistingSharedBuffers) {
+            sharedIt->second = std::move(sharedBuffers);
+
+            // The old shared VB/IB may still be referenced by command buffers
+            // from earlier in-flight frames. Defer the final shared_ptr release
+            // until the frame deletion queue says it is safe.
+            if (oldSharedBuffers.vertexBuffer || oldSharedBuffers.indexBuffer) {
+                auto retiredBuffers = std::make_shared<SharedMeshBuffers>(std::move(oldSharedBuffers));
+                m_deletionQueue.Push([retiredBuffers]() mutable {
+                    retiredBuffers->vertexBuffer.reset();
+                    retiredBuffers->indexBuffer.reset();
+                });
+            }
+        } else {
+            sharedIt = m_sharedMeshBuffers.insert_or_assign(sharedKey, std::move(sharedBuffers)).first;
+        }
     }
 
     PerObjectBuffers objectBuffers;
@@ -1048,6 +1268,9 @@ void InfVkCoreModular::EnsureObjectBuffers(uint64_t objectId, const std::vector<
     objectBuffers.vertexCount = sharedIt->second.vertexCount;
     objectBuffers.indexCount = sharedIt->second.indexCount;
     objectBuffers.sharedKey = sharedKey;
+    objectBuffers.lastVertexPtr = vertices.data();
+    objectBuffers.lastIndexPtr = indices.data();
+    objectBuffers.ensuredOnFrame = m_ensureFrameCounter;
 
     m_perObjectBuffers[objectId] = std::move(objectBuffers);
 }
@@ -1056,12 +1279,8 @@ void InfVkCoreModular::CleanupUnusedBuffers(const std::vector<DrawCall> &activeD
 {
     // Build set of active objectIds
     std::unordered_set<uint64_t> activeIds;
-    std::unordered_set<SharedMeshKey, SharedMeshKeyHash> activeSharedKeys;
     for (const auto &dc : activeDrawCalls) {
         activeIds.insert(dc.objectId);
-        if (dc.meshVertices && dc.meshIndices && !dc.meshVertices->empty() && !dc.meshIndices->empty()) {
-            activeSharedKeys.insert({dc.meshVertices->data(), dc.meshIndices->data()});
-        }
     }
 
     // Remove buffers for objects no longer in the scene.
@@ -1075,8 +1294,14 @@ void InfVkCoreModular::CleanupUnusedBuffers(const std::vector<DrawCall> &activeD
         }
     }
 
+    // Collect active shared keys from surviving per-object entries
+    std::unordered_set<SharedMeshKey, SharedMeshKeyHash> activeSharedKeysFromObjects;
+    for (const auto &kv : m_perObjectBuffers) {
+        activeSharedKeysFromObjects.insert(kv.second.sharedKey);
+    }
+
     for (auto it = m_sharedMeshBuffers.begin(); it != m_sharedMeshBuffers.end();) {
-        if (activeSharedKeys.find(it->first) == activeSharedKeys.end()) {
+        if (activeSharedKeysFromObjects.find(it->first) == activeSharedKeysFromObjects.end()) {
             auto buffers = std::make_shared<SharedMeshBuffers>(std::move(it->second));
             m_deletionQueue.Push([buffers]() mutable {
                 buffers->vertexBuffer.reset();

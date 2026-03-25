@@ -415,6 +415,7 @@ void SceneManager::SyncExternalRigidbodyMoves()
 void SceneManager::ClearComponentRegistries()
 {
     m_activeMeshRenderers.clear();
+    m_activeLights.clear();
 }
 
 // ========================================================================
@@ -456,6 +457,32 @@ void SceneManager::MarkMeshRenderersDirtyForAsset(const std::string &meshGuid)
             auto mesh = renderer->GetMeshAssetRef().Get();
             if (mesh)
                 renderer->SetLocalBounds(mesh->GetBoundsMin(), mesh->GetBoundsMax());
+        }
+    }
+}
+
+// ========================================================================
+// Light component registry
+// ========================================================================
+
+void SceneManager::RegisterLight(Light *light)
+{
+    if (!light)
+        return;
+    for (auto *l : m_activeLights) {
+        if (l == light)
+            return;
+    }
+    m_activeLights.push_back(light);
+}
+
+void SceneManager::UnregisterLight(Light *light)
+{
+    for (size_t i = 0; i < m_activeLights.size(); ++i) {
+        if (m_activeLights[i] == light) {
+            m_activeLights[i] = m_activeLights.back();
+            m_activeLights.pop_back();
+            return;
         }
     }
 }

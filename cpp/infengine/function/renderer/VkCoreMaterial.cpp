@@ -752,6 +752,55 @@ void InfVkCoreModular::CmdUpdateShadowDataForCamera(VkCommandBuffer cmdBuf, cons
                          nullptr, 0, nullptr);
 }
 
+void InfVkCoreModular::CmdRestoreEditorShadowData(VkCommandBuffer cmdBuf)
+{
+    if (m_lightingUboBuffers.empty() || !m_lightingUboBuffers[0])
+        return;
+
+    VkBuffer buffer = m_lightingUboBuffers[0]->GetBuffer();
+
+    // Restore lightVP, cascade splits, and shadow params from the staged
+    // editor lighting UBO that was prepared at the start of this frame.
+    constexpr VkDeviceSize vpOffset = offsetof(ShaderLightingUBO, lightVP);
+    constexpr VkDeviceSize splitOffset = offsetof(ShaderLightingUBO, shadowCascadeSplits);
+    constexpr VkDeviceSize paramsOffset = offsetof(ShaderLightingUBO, shadowMapParams);
+
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+    vkCmdUpdateBuffer(cmdBuf, buffer, vpOffset, sizeof(m_stagedLightingUBO.lightVP), m_stagedLightingUBO.lightVP);
+    vkCmdUpdateBuffer(cmdBuf, buffer, splitOffset, sizeof(glm::vec4), &m_stagedLightingUBO.shadowCascadeSplits);
+    vkCmdUpdateBuffer(cmdBuf, buffer, paramsOffset, sizeof(glm::vec4), &m_stagedLightingUBO.shadowMapParams);
+
+    // Also restore per-cascade shadow UBOs to editor camera VPs
+    const uint32_t frameIndex = m_currentFrame % m_maxFramesInFlight;
+    const uint32_t cascadeCount = m_lightCollector.GetShadowCascadeCount();
+    struct ShadowUBO
+    {
+        glm::mat4 model, view, proj;
+    };
+    for (uint32_t ci = 0; ci < cascadeCount && ci < NUM_SHADOW_CASCADES; ++ci) {
+        uint32_t bufIdx = frameIndex * NUM_SHADOW_CASCADES + ci;
+        if (bufIdx >= m_shadowUboBuffers.size())
+            break;
+        VkBuffer shadowBuffer = m_shadowUboBuffers[bufIdx];
+        if (shadowBuffer == VK_NULL_HANDLE)
+            continue;
+        ShadowUBO ubo{glm::mat4(1.0f), glm::mat4(1.0f), m_lightCollector.GetShadowLightVP(ci)};
+        vkCmdUpdateBuffer(cmdBuf, shadowBuffer, 0, sizeof(ShadowUBO), &ubo);
+    }
+
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
+    vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &barrier, 0,
+                         nullptr, 0, nullptr);
+}
+
 // ============================================================================
 // Buffer / Shader Accessors (for OutlineRenderer)
 // ============================================================================

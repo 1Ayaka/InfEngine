@@ -6,15 +6,15 @@ This replaces the old RuntimeBuilder cache-copy approach with true native
 compilation.  The output is a self-contained directory containing the EXE,
 all required DLLs, and the embedded Python runtime.
 
-MinGW64 is auto-downloaded by Nuitka so no manual compiler install is needed.
-To avoid MinGW's std::filesystem crash on non-ASCII user paths (e.g. Chinese
-usernames), all intermediate compilation is done in an ASCII-safe staging
-directory and moved to the final destination afterwards.
+On Windows, InfEngine requires an MSVC toolchain for game builds.
+All intermediate compilation is done in an ASCII-safe staging directory and
+moved to the final destination afterwards.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib
 import os
 import shutil
 import subprocess
@@ -25,17 +25,60 @@ from typing import Callable, List, Optional
 
 from InfEngine.debug import Debug
 
-# ASCII-safe root for Nuitka staging (avoids MinGW std::filesystem crash
-# on non-ASCII characters in TEMP / user-profile paths).
+# ASCII-safe root for Nuitka staging and temporary build artifacts.
 _STAGING_ROOT = "C:\\_InfBuild"
 
 # Persistent Nuitka compilation cache — lives outside the per-build staging
 # directory so it survives across builds, dramatically speeding up rebuilds.
 _NUITKA_CACHE_DIR = os.path.join(_STAGING_ROOT, "_nuitka_cache")
 
+_AUTO_INSTALLABLE_PACKAGES = {
+    "nuitka": "nuitka",
+    "ordered_set": "ordered-set",
+    "PIL": "Pillow",
+}
+
 
 class _BuildCancelled(Exception):
     """Raised when the user cancels the build."""
+
+
+def _has_msvc_toolchain() -> bool:
+    if shutil.which("cl"):
+        return True
+
+    program_files = os.environ.get("ProgramFiles", "")
+    if not program_files:
+        return False
+
+    return os.path.exists(
+        os.path.join(program_files, "Microsoft Visual Studio")
+    )
+
+
+def _ensure_python_packages(*module_names: str) -> None:
+    missing_packages: list[str] = []
+    for module_name in module_names:
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            package_name = _AUTO_INSTALLABLE_PACKAGES.get(module_name)
+            if package_name and package_name not in missing_packages:
+                missing_packages.append(package_name)
+
+    if not missing_packages:
+        return
+
+    Debug.log_internal(
+        "Missing build packages detected — installing automatically: "
+        + ", ".join(missing_packages)
+    )
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", *missing_packages, "--quiet"],
+    )
+
+    for module_name in module_names:
+        importlib.import_module(module_name)
 
 
 class NuitkaBuilder:
@@ -123,33 +166,22 @@ class NuitkaBuilder:
     def _check_nuitka():
         """Ensure Nuitka is installed; auto-install if missing."""
         try:
-            import nuitka  # noqa: F401
+            _ensure_python_packages("nuitka", "ordered_set")
         except ImportError:
-            Debug.log_internal("Nuitka not found — installing automatically...")
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install",
-                 "nuitka", "ordered-set", "--quiet"],
+            raise RuntimeError(
+                "Failed to auto-install Nuitka.  "
+                "Please run manually:\n    pip install nuitka ordered-set"
             )
-            # Verify the install succeeded
-            try:
-                import nuitka  # noqa: F401
-            except ImportError:
-                raise RuntimeError(
-                    "Failed to auto-install Nuitka.  "
-                    "Please run manually:\n    pip install nuitka ordered-set"
-                )
 
     # ------------------------------------------------------------------
-    # Staging directory (ASCII-safe for MinGW compatibility)
+    # Staging directory
     # ------------------------------------------------------------------
 
     def _prepare_staging(self):
         """Create a clean ASCII-only staging directory.
 
-        MinGW's ``std::filesystem`` implementation crashes when paths
-        contain non-ASCII characters (e.g. Chinese usernames). By
-        running Nuitka inside an ASCII-only staging dir we sidestep
-        the issue entirely.
+        Using a short ASCII-only staging directory avoids temporary-path
+        edge cases and keeps compiler output paths stable on Windows.
         """
         if os.path.isdir(self._staging_dir):
             shutil.rmtree(self._staging_dir, ignore_errors=True)
@@ -185,22 +217,14 @@ class NuitkaBuilder:
             "--no-deployment-flag=excluded-module-usage",
         ]
 
-        # On Windows, prefer MSVC which produces binaries that are far less
-        # likely to trigger antivirus false positives compared to MinGW.
-        # MSVC also handles Unicode paths natively, avoiding the
-        # std::filesystem crashes that plague MinGW on non-ASCII paths.
-        # Falls back to MinGW (auto-downloaded by Nuitka) when MSVC is
-        # unavailable.
         if sys.platform == "win32":
-            if shutil.which("cl") or os.path.exists(
-                os.path.join(
-                    os.environ.get("ProgramFiles", ""),
-                    "Microsoft Visual Studio",
+            if not _has_msvc_toolchain():
+                raise RuntimeError(
+                    "Windows game builds require Microsoft Visual C++ Build Tools (MSVC).\n"
+                    "MinGW fallback has been disabled.\n"
+                    "Install Visual Studio 2022 Build Tools or Visual Studio with the Desktop development with C++ workload, then try again."
                 )
-            ):
-                cmd.append("--msvc=latest")
-            else:
-                cmd.append("--mingw64")
+            cmd.append("--msvc=latest")
 
         # Link-time optimization for smaller and faster binaries
         cmd.append("--lto=yes")
@@ -495,12 +519,44 @@ class NuitkaBuilder:
         # Use PowerShell to: (1) find or create a self-signed code signing
         # cert in CurrentUser\\My, (2) sign the EXE.
         ps_script = r'''
+$ErrorActionPreference = "Stop"
 $certName = "InfEngine Build Signing"
-$cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
-        Where-Object { $_.Subject -eq "CN=$certName" -and $_.NotAfter -gt (Get-Date) } |
+$securityModule = Get-Module -ListAvailable Microsoft.PowerShell.Security | Select-Object -First 1
+if (-not $securityModule) {
+    Write-Output "UNSUPPORTED:security-module"
+    exit 0
+}
+
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+
+if (-not (Get-PSDrive -Name Cert -ErrorAction SilentlyContinue)) {
+    Write-Output "UNSUPPORTED:cert-drive"
+    exit 0
+}
+
+$setAuth = Get-Command Set-AuthenticodeSignature -ErrorAction SilentlyContinue
+if (-not $setAuth) {
+    Write-Output "UNSUPPORTED:set-authenticode"
+    exit 0
+}
+
+$newSelfSigned = Get-Command New-SelfSignedCertificate -ErrorAction SilentlyContinue
+
+$cert = Get-ChildItem Cert:\CurrentUser\My |
+        Where-Object {
+            $_.Subject -eq "CN=$certName" -and
+            $_.NotAfter -gt (Get-Date) -and
+            $_.HasPrivateKey -and
+            ($_.EnhancedKeyUsageList | Where-Object { $_.FriendlyName -eq "Code Signing" })
+        } |
         Select-Object -First 1
 
 if (-not $cert) {
+    if (-not $newSelfSigned) {
+        Write-Output "UNSUPPORTED:new-self-signed-certificate"
+        exit 0
+    }
+
     $cert = New-SelfSignedCertificate `
         -Subject "CN=$certName" `
         -Type CodeSigningCert `
@@ -509,22 +565,48 @@ if (-not $cert) {
 }
 
 $result = Set-AuthenticodeSignature -FilePath $EXE_PATH -Certificate $cert -HashAlgorithm SHA256
-$result.Status
+if ($null -eq $result) {
+    Write-Output "UNSUPPORTED:no-result"
+    exit 0
+}
+
+Write-Output ("STATUS:" + [string]$result.Status)
+if ($result.StatusMessage) {
+    Write-Output ("MESSAGE:" + [string]$result.StatusMessage)
+}
 '''
         ps_script = ps_script.replace("$EXE_PATH", f'"{exe_path}"')
         try:
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                  "-Command", ps_script],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=60,
             )
-            output = (r.stdout or "").strip()
-            if "Valid" in output:
+            stdout_lines = [line.strip() for line in (r.stdout or "").splitlines() if line.strip()]
+            stderr_text = (r.stderr or "").strip()
+
+            unsupported = next((line for line in stdout_lines if line.startswith("UNSUPPORTED:")), "")
+            status_line = next((line for line in stdout_lines if line.startswith("STATUS:")), "")
+            message_line = next((line for line in stdout_lines if line.startswith("MESSAGE:")), "")
+
+            if r.returncode != 0:
+                details = stderr_text or "\n".join(stdout_lines)
+                Debug.log_warning(f"Code signing failed: {details}")
+                return
+
+            if unsupported:
+                reason = unsupported.split(":", 1)[1]
+                Debug.log_internal(f"Code signing skipped: unsupported PowerShell signing environment ({reason})")
+                return
+
+            status = status_line.split(":", 1)[1] if status_line else ""
+            message = message_line.split(":", 1)[1] if message_line else ""
+
+            if status == "Valid":
                 Debug.log_internal("Signed EXE with self-signed certificate")
             else:
-                Debug.log_warning(
-                    f"Code signing returned: {output or r.stderr.strip()}"
-                )
+                details = message or stderr_text or "\n".join(stdout_lines)
+                Debug.log_warning(f"Code signing returned: {status or details}")
         except Exception as exc:
             Debug.log_warning(f"Code signing skipped: {exc}")
 
@@ -562,6 +644,7 @@ $result.Status
             return icon_path
 
         try:
+            _ensure_python_packages("PIL")
             from PIL import Image
         except ImportError:
             Debug.log_warning(

@@ -232,6 +232,12 @@ class SceneRenderGraph
      */
     void EnsureGraphBuilt();
 
+    /// @brief Diagnostic: whether the graph is currently built and ready to execute
+    [[nodiscard]] bool IsGraphBuilt() const { return m_graphBuilt; }
+
+    /// @brief Diagnostic: whether the graph needs a rebuild before next execute
+    [[nodiscard]] bool NeedsRebuild() const { return m_needsRebuild; }
+
     /**
      * @brief Called when scene render target is resized
      */
@@ -327,6 +333,12 @@ class SceneRenderGraph
         // guard) could leave m_graphBuilt = true while the graph still
         // references stale VkImage handles from the previous scene.
         m_graphBuilt = false;
+        // Clear the stale Python graph descriptor so that
+        // GetRequestedMsaaSamples() returns 0 until the new scene's
+        // pipeline calls ApplyPythonGraph().  This avoids the MSAA
+        // mismatch guard firing on an outdated descriptor.
+        m_hasPythonGraph = false;
+        m_pythonGraphDesc = {};
     }
 
     /// @brief Get cached view matrix

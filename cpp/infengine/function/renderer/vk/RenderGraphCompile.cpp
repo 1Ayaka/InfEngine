@@ -9,6 +9,7 @@
 #include "RenderGraph.h"
 #include "VkDeviceContext.h"
 #include "VkPipelineManager.h"
+#include <SDL3/SDL.h>
 #include <core/error/InfError.h>
 
 #include <algorithm>
@@ -1201,6 +1202,7 @@ void RenderGraph::FreeResources()
 
     if (!m_context->IsShuttingDown()) {
         vkDeviceWaitIdle(device);
+        SDL_PumpEvents();
     }
 
     // Framebuffers reference VkImageViews that we are about to destroy.

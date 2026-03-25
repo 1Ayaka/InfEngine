@@ -7,6 +7,7 @@ UIEditorPanel and GameViewPanel.
 from __future__ import annotations
 
 from operator import attrgetter
+import time
 from typing import List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,11 +20,18 @@ _sort_key = attrgetter('sort_order')
 _canvas_cache: list = []
 _canvas_sorted_cache: list = []
 _canvas_with_go_cache: list = []
+_canvas_cache_scene_id: int = 0
 _canvas_cache_version: int = -1
+_canvas_cache_rebuild_time: float = 0.0
+_EMPTY_CACHE_INITIAL_RETRY_INTERVAL = 0.25
+_EMPTY_CACHE_MAX_RETRY_INTERVAL = 8.0
+_empty_cache_retry_interval: float = _EMPTY_CACHE_INITIAL_RETRY_INTERVAL
 
 
 def _rebuild_cache(scene) -> None:
-    global _canvas_cache, _canvas_sorted_cache, _canvas_with_go_cache, _canvas_cache_version
+    global _canvas_cache, _canvas_sorted_cache, _canvas_with_go_cache
+    global _canvas_cache_scene_id, _canvas_cache_version, _canvas_cache_rebuild_time
+    global _empty_cache_retry_interval
     from InfEngine.ui import UICanvas
 
     result: list = []
@@ -42,13 +50,43 @@ def _rebuild_cache(scene) -> None:
     _canvas_with_go_cache = result
     _canvas_cache = [comp for _, comp in result]
     _canvas_sorted_cache = sorted(_canvas_cache, key=_sort_key)
+    _canvas_cache_scene_id = id(scene) if scene is not None else 0
     _canvas_cache_version = scene.structure_version if scene is not None else -1
+    _canvas_cache_rebuild_time = time.perf_counter()
+    if _canvas_cache:
+        _empty_cache_retry_interval = _EMPTY_CACHE_INITIAL_RETRY_INTERVAL
+    else:
+        _empty_cache_retry_interval = min(_EMPTY_CACHE_MAX_RETRY_INTERVAL,
+                                          max(_EMPTY_CACHE_INITIAL_RETRY_INTERVAL,
+                                              _empty_cache_retry_interval * 2.0))
+
+
+def _ensure_cache(scene, *, allow_stale_empty: bool = False) -> None:
+    global _canvas_cache_scene_id, _canvas_cache_version
+    if scene is None:
+        return
+
+    scene_id = id(scene)
+    ver = scene.structure_version
+    if scene_id != _canvas_cache_scene_id:
+        _rebuild_cache(scene)
+        return
+    if allow_stale_empty and not _canvas_cache:
+        if (time.perf_counter() - _canvas_cache_rebuild_time) < _empty_cache_retry_interval:
+            return
+    if ver == _canvas_cache_version:
+        return
+    _rebuild_cache(scene)
 
 
 def invalidate_canvas_cache() -> None:
     """Force cache invalidation (e.g. on scene load)."""
-    global _canvas_cache_version
+    global _canvas_cache_scene_id, _canvas_cache_version, _canvas_cache_rebuild_time
+    global _empty_cache_retry_interval
+    _canvas_cache_scene_id = 0
     _canvas_cache_version = -1
+    _canvas_cache_rebuild_time = 0.0
+    _empty_cache_retry_interval = _EMPTY_CACHE_INITIAL_RETRY_INTERVAL
 
 
 def collect_canvases_with_go(scene) -> List[Tuple]:
@@ -57,35 +95,26 @@ def collect_canvases_with_go(scene) -> List[Tuple]:
     Walks the full scene hierarchy.  Used by UIEditorPanel which needs
     both the owning GameObject and the canvas component.
     """
-    global _canvas_cache_version
     if scene is None:
         return []
-    ver = scene.structure_version
-    if ver != _canvas_cache_version:
-        _rebuild_cache(scene)
+    _ensure_cache(scene)
     return _canvas_with_go_cache
 
 
-def collect_canvases(scene) -> list:
+def collect_canvases(scene, *, allow_stale_empty: bool = False) -> list:
     """Return ``[UICanvas, ...]`` for every canvas in *scene*.
 
     Lighter variant used by GameViewPanel which only needs the component.
     """
-    global _canvas_cache_version
     if scene is None:
         return []
-    ver = scene.structure_version
-    if ver != _canvas_cache_version:
-        _rebuild_cache(scene)
+    _ensure_cache(scene, allow_stale_empty=allow_stale_empty)
     return _canvas_cache
 
 
-def collect_sorted_canvases(scene) -> list:
+def collect_sorted_canvases(scene, *, allow_stale_empty: bool = False) -> list:
     """Return ``[UICanvas, ...]`` sorted by ``sort_order`` (cached)."""
-    global _canvas_cache_version
     if scene is None:
         return []
-    ver = scene.structure_version
-    if ver != _canvas_cache_version:
-        _rebuild_cache(scene)
+    _ensure_cache(scene, allow_stale_empty=allow_stale_empty)
     return _canvas_sorted_cache

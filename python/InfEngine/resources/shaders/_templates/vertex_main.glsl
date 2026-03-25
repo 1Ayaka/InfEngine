@@ -13,8 +13,9 @@ void main() {
     v.color    = inColor;
     v.texCoord = inTexCoord;
 ${VERTEX_CALL}
-    vec4 worldPos    = pc.model * vec4(v.position, 1.0);
-    mat3 normalMatrix = mat3(pc.normalMat);
+    mat4 instModel    = instanceModels[gl_InstanceIndex];
+    vec4 worldPos     = instModel * vec4(v.position, 1.0);
+    mat3 normalMatrix = transpose(inverse(mat3(instModel)));
     vec3 worldNormal  = normalize(normalMatrix * v.normal);
     vec4 worldTangent = vec4(normalize(normalMatrix * v.tangent.xyz), v.tangent.w);
 

@@ -16,6 +16,11 @@ layout(push_constant) uniform PushConstants {
     mat4 normalMat;
 } pc;
 
+// Instance buffer — per-object model matrices for GPU instancing (set 2, binding 1)
+layout(std430, set = 2, binding = 1) readonly buffer InstanceBuffer {
+    mat4 instanceModels[];
+};
+
 // Vertex attributes
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;

@@ -1,3 +1,4 @@
+import gc
 import os
 import time
 
@@ -170,8 +171,48 @@ class Engine():
                 pass
         self._engine.set_pre_gui_callback(_pre_gui_tick)
 
-        Debug.log_internal("Engine started")
+        # Install a post-draw callback that runs AFTER GPU submit + present.
+        # poll_deferred_load (heavy scene loading) is moved here so it executes
+        # between frames, sandwiched by SDL_PumpEvents() in C++.  This prevents
+        # Windows from flagging the application as "Not Responding" during long
+        # scene loads that previously ran inside BuildFrame().
+        #
+        # Manual GC collection also runs here at controlled intervals.
+        # Automatic GC is disabled below to prevent unpredictable ~5ms
+        # pauses inside the hot UI/render path.  With 1000+ scene objects,
+        # CPython's default gen0 threshold (700) triggers collections on
+        # nearly every frame inside random timing windows.
+        _gc_frame = [0]  # mutable counter for closure
+        def _post_draw_tick():
+            from InfEngine.engine.scene_manager import SceneFileManager
+            sfm = SceneFileManager.instance()
+            if sfm is not None:
+                try:
+                    sfm.poll_pending_save()
+                except Exception:
+                    pass
+                try:
+                    sfm.poll_deferred_load()
+                except Exception:
+                    pass
+            # Periodic manual GC: gen0 every 120 frames (~1s at 120fps),
+            # gen1 every 600 frames (~5s), full every 3000 frames (~25s).
+            _gc_frame[0] += 1
+            _f = _gc_frame[0]
+            if _f % 3000 == 0:
+                gc.collect(2)
+            elif _f % 600 == 0:
+                gc.collect(1)
+            elif _f % 120 == 0:
+                gc.collect(0)
+        self._engine.set_post_draw_callback(_post_draw_tick)
+
+        # Disable automatic GC to eliminate unpredictable pauses during
+        # rendering.  Manual collection runs in _post_draw_tick above.
+        gc.disable()
+        Debug.log_internal("Engine started (automatic GC disabled, manual collection active)")
         self._engine.run()
+        gc.enable()  # Restore automatic GC for shutdown cleanup
         # C++ Run() returned (main loop ended, but Cleanup not yet called).
         # Optimised shutdown order:
         #  1. Signal ResourcesManager to stop (non-blocking).

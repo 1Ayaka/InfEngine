@@ -20,6 +20,13 @@ from hub_utils import get_bundle_dir, get_hub_data_dir, is_frozen
 
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _RUNTIME_ROOT = Path.home() / ".infengine" / "runtime"
+_TEMPLATE_BUILDER_PACKAGES = [
+    "nuitka",
+    "ordered-set",
+    "Pillow",
+    "imageio",
+    "av",
+]
 
 
 def _managed_runtime_dir() -> str:
@@ -79,11 +86,85 @@ def _is_embeddable_python_root(python_root: str) -> bool:
         return False
 
 
+def _pth_files(python_root: str) -> list[str]:
+    if not python_root or not os.path.isdir(python_root):
+        return []
+    return [
+        os.path.join(python_root, name)
+        for name in os.listdir(python_root)
+        if name.lower().endswith("._pth") and os.path.isfile(os.path.join(python_root, name))
+    ]
+
+
+def _enable_site_for_embedded_runtime(python_root: str) -> None:
+    if not _is_embeddable_python_root(python_root):
+        return
+
+    required_lines = ["python312.zip", ".", "Lib", "Lib/site-packages"]
+    for pth_path in _pth_files(python_root):
+        with open(pth_path, "r", encoding="utf-8") as f:
+            raw_lines = [line.rstrip("\r\n") for line in f]
+
+        output: list[str] = []
+        seen: set[str] = set()
+        for line in raw_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                output.append(line)
+                continue
+            if stripped == "import site":
+                continue
+            if stripped not in seen:
+                output.append(stripped)
+                seen.add(stripped)
+
+        for item in required_lines:
+            if item not in seen:
+                output.append(item)
+                seen.add(item)
+        output.append("import site")
+
+        with open(pth_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(output).rstrip() + "\n")
+
+
 def _quote_burn(value: str) -> str:
     """Quote a value for the Burn bootstrapper command line."""
     if " " in value or '"' in value:
         return f'"{value}"'
     return value
+
+
+def _copy_python_installation(source_python: str, target_root: str) -> str:
+    source_root = os.path.dirname(source_python)
+    shutil.rmtree(target_root, ignore_errors=True)
+    shutil.copytree(
+        source_root,
+        target_root,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
+
+    copied_python = os.path.join(target_root, os.path.basename(source_python))
+    _enable_site_for_embedded_runtime(target_root)
+    if os.path.isfile(copied_python):
+        return copied_python
+
+    for current_root, _dirs, files in os.walk(target_root):
+        for filename in files:
+            if filename.lower() == "python.exe":
+                return os.path.join(current_root, filename)
+    raise PythonRuntimeError(
+        "Copied an existing Python 3.12 installation, but python.exe was not detected afterwards.\n"
+        f"Source: {source_root}\nTarget: {target_root}"
+    )
+
+
+def _find_python_in_root(root: str) -> Optional[str]:
+    for dirpath, _dirs, files in os.walk(root):
+        for filename in files:
+            if filename.lower() == "python.exe":
+                return os.path.join(dirpath, filename)
+    return None
 
 
 class PythonRuntimeError(RuntimeError):
@@ -96,6 +177,12 @@ class PythonRuntimeManager:
 
     def bundled_runtime_dir(self) -> str:
         return os.path.join(get_bundle_dir(), "InfEngineHubData", "runtime")
+
+    def bundled_full_runtime_root(self) -> str:
+        return os.path.join(self.bundled_runtime_dir(), "python312")
+
+    def bundled_full_runtime_python(self) -> Optional[str]:
+        return _find_python_in_root(self.bundled_full_runtime_root())
 
     def installed_runtime_dir(self) -> str:
         return _managed_runtime_dir()
@@ -137,10 +224,17 @@ class PythonRuntimeManager:
         return os.path.join(self.private_runtime_root(), "bin", "python")
 
     def _private_runtime_candidates(self) -> list[str]:
-        roots = [self.private_runtime_root(), _legacy_private_runtime_root()]
+        roots = [
+            self.private_runtime_root(),
+            _legacy_private_runtime_root(),
+            self.bundled_full_runtime_root(),
+        ]
         candidates = [self.private_runtime_python()]
         if sys.platform == "win32":
             candidates.append(os.path.join(_legacy_private_runtime_root(), "python.exe"))
+            bundled_python = self.bundled_full_runtime_python()
+            if bundled_python:
+                candidates.append(bundled_python)
         else:
             candidates.append(os.path.join(_legacy_private_runtime_root(), "bin", "python"))
 
@@ -182,6 +276,101 @@ class PythonRuntimeManager:
     def has_venv_template(self) -> bool:
         return self._is_valid_venv(self.venv_template_root())
 
+    @staticmethod
+    def _has_module(python_exe: str, module_name: str) -> bool:
+        kwargs: dict = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+        }
+        if sys.platform == "win32":
+            kwargs["creationflags"] = _NO_WINDOW
+
+        try:
+            completed = subprocess.run(
+                [python_exe, "-c", f"import importlib.util; print(int(importlib.util.find_spec('{module_name}') is not None))"],
+                timeout=20,
+                **kwargs,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return completed.returncode == 0 and (completed.stdout or "").strip() == "1"
+
+    def _create_runtime_env(self, python_exe: str, target_root: str) -> None:
+        _enable_site_for_embedded_runtime(os.path.dirname(python_exe))
+
+        commands: list[list[str]] = []
+        if not _is_embeddable_python_root(os.path.dirname(python_exe)):
+            commands.append([python_exe, "-m", "venv", "--copies", target_root])
+        if self._has_module(python_exe, "virtualenv"):
+            commands.append([python_exe, "-m", "virtualenv", "--always-copy", target_root])
+
+        if not commands:
+            raise PythonRuntimeError(
+                "The bundled Python runtime does not provide stdlib venv or virtualenv.\n"
+                "For an embeddable runtime, include virtualenv in Lib/site-packages before packaging."
+            )
+
+        last_error = ""
+        for args in commands:
+            completed = self._run_command(args, timeout=600, raise_on_error=False)
+            if completed.returncode == 0:
+                return
+            last_error = self._summarize_output(completed.stderr or completed.stdout)
+
+        raise PythonRuntimeError(
+            "Failed to prepare the shared virtual environment template.\n"
+            f"{last_error}"
+        )
+
+    def _install_template_packages(self, venv_root: str) -> None:
+        if sys.platform == "win32":
+            venv_python = os.path.join(venv_root, "Scripts", "python.exe")
+        else:
+            venv_python = os.path.join(venv_root, "bin", "python")
+
+        if not os.path.isfile(venv_python):
+            raise PythonRuntimeError(
+                f"Virtual environment template python was not found at {venv_python}."
+            )
+
+        args = [
+            venv_python,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-input",
+            "--prefer-binary",
+        ]
+
+        wheelhouse_dirs = self._wheelhouse_dirs()
+        if wheelhouse_dirs:
+            args.append("--no-index")
+            for wheelhouse in wheelhouse_dirs:
+                args.extend(["--find-links", wheelhouse])
+
+        args.extend(_TEMPLATE_BUILDER_PACKAGES)
+
+        completed = self._run_command(args, timeout=1800, raise_on_error=False)
+        if completed.returncode != 0:
+            raise PythonRuntimeError(
+                "Failed to install build support packages into the shared virtual environment template.\n"
+                f"{self._summarize_output(completed.stderr or completed.stdout)}"
+            )
+
+        verify = self._run_command(
+            [venv_python, "-c", "import nuitka, PIL, imageio, av; print('ok')"],
+            timeout=60,
+            raise_on_error=False,
+        )
+        if verify.returncode != 0:
+            raise PythonRuntimeError(
+                "The shared virtual environment template is missing required build packages.\n"
+                f"{self._summarize_output(verify.stderr or verify.stdout)}"
+            )
+
     def get_runtime_path(self) -> Optional[str]:
         for candidate in self._candidate_paths():
             if self._is_valid_python312(candidate):
@@ -194,10 +383,21 @@ class PythonRuntimeManager:
             return python_exe
 
         if not python_exe:
-            installer = self.prepare_installer()
-            self.install_runtime(installer)
+            bundled_python = self.bundled_full_runtime_python()
+            if bundled_python and self._is_valid_python312(bundled_python):
+                python_exe = bundled_python
+            else:
+                copy_source = self._find_copy_source_python()
+                if copy_source:
+                    python_exe = self._clone_runtime_from(copy_source)
+                else:
+                    installer = self.prepare_installer()
+                    self.install_runtime(installer)
 
             python_exe = self.get_runtime_path()
+            if not python_exe and bundled_python and self._is_valid_python312(bundled_python):
+                python_exe = bundled_python
+
             if not python_exe:
                 raise PythonRuntimeError(
                     "Python 3.12 installation completed, but python.exe was not detected.\n"
@@ -333,6 +533,25 @@ class PythonRuntimeManager:
             f"Python installer exited with code {completed.returncode}.{log_hint}\n{details}"
         )
 
+    def _find_copy_source_python(self) -> Optional[str]:
+        excluded_roots = {
+            os.path.normcase(os.path.abspath(self.private_runtime_root())),
+            os.path.normcase(os.path.abspath(_legacy_private_runtime_root())),
+        }
+        for candidate in self._system_runtime_candidates():
+            if not self._is_valid_python312(candidate):
+                continue
+            candidate_root = os.path.normcase(os.path.abspath(os.path.dirname(candidate)))
+            if candidate_root in excluded_roots:
+                continue
+            return candidate
+        return None
+
+    def _clone_runtime_from(self, source_python: str) -> str:
+        target_root = self.private_runtime_root()
+        os.makedirs(self.installed_runtime_dir(), exist_ok=True)
+        return _copy_python_installation(source_python, target_root)
+
     @staticmethod
     def _build_installer_cmdline(
         installer_path: str,
@@ -407,17 +626,8 @@ class PythonRuntimeManager:
         shutil.rmtree(temp_root, ignore_errors=True)
         shutil.rmtree(template_root, ignore_errors=True)
 
-        completed = self._run_command(
-            [python_exe, "-m", "venv", "--copies", temp_root],
-            timeout=600,
-        )
-        if completed.returncode != 0:
-            details = self._summarize_output(completed.stderr or completed.stdout)
-            raise PythonRuntimeError(
-                "Failed to prepare the shared virtual environment template.\n"
-                f"Exit code: {completed.returncode}\n"
-                f"{details}"
-            )
+        self._create_runtime_env(python_exe, temp_root)
+        self._install_template_packages(temp_root)
 
         self._rewrite_pyvenv_cfg(temp_root, python_exe)
         os.replace(temp_root, template_root)
@@ -529,12 +739,26 @@ class PythonRuntimeManager:
             return None
         return value[-1].strip()
 
+    def _system_runtime_candidates(self) -> list[str]:
+        candidates = self._registry_candidates()
+
+        for root in filter(None, [os.environ.get("ProgramFiles"), os.environ.get("LocalAppData")]):
+            if root == os.environ.get("LocalAppData"):
+                candidates.append(os.path.join(root, "Programs", "Python", "Python312", "python.exe"))
+            else:
+                candidates.append(os.path.join(root, "Python312", "python.exe"))
+
+        py_launcher = self._python_from_launcher()
+        if py_launcher:
+            candidates.append(py_launcher)
+
+        return self._dedupe_candidates(candidates)
+
     def _is_valid_python312(self, python_exe: str) -> bool:
         if not python_exe or not os.path.isfile(python_exe):
             return False
 
-        if _is_embeddable_python_root(os.path.dirname(python_exe)):
-            return False
+        _enable_site_for_embedded_runtime(os.path.dirname(python_exe))
 
         completed = self._run_command(
             [python_exe, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],

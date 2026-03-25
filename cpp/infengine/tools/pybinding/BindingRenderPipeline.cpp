@@ -59,6 +59,9 @@ void RegisterRenderPipelineBindings(py::module_ &m)
              "Apply a Python-defined RenderGraph topology to the scene render graph")
         .def("submit_culling", &ScriptableRenderContext::SubmitCulling, py::arg("culling"),
              "Submit all culling results as full draw calls (filtering done by graph pass callbacks)")
+        .def("render_with_graph", &ScriptableRenderContext::RenderWithGraph, py::arg("camera"),
+             py::arg("description"),
+             "Single-call render: setup + cull + apply_graph + submit (avoids Python round-trips)")
         // Phase 2: CommandBuffer integration
         .def("execute_command_buffer", &ScriptableRenderContext::ExecuteCommandBuffer, py::arg("cmd"),
              "Execute a deferred CommandBuffer (commands are buffered until submit)")

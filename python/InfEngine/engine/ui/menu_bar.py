@@ -55,10 +55,10 @@ class MenuBarPanel(InfGUIRenderable):
         # Handle global shortcuts (before any menu logic)
         self._handle_shortcuts(ctx)
 
-        # Poll pending save dialog results every frame
-        if self._scene_file_manager:
-            self._scene_file_manager.poll_pending_save()
-            self._scene_file_manager.poll_deferred_load()
+        # poll_pending_save() and poll_deferred_load() have been moved to the
+        # post-draw callback (engine.py → _post_draw_tick) so that heavy scene
+        # loads run AFTER GPU submit, between SDL_PumpEvents() calls, preventing
+        # Windows "Not Responding" during long loads.
 
         # Check for window close request (SDL_EVENT_QUIT intercepted by C++)
         if self._scene_file_manager and self.__native_engine:

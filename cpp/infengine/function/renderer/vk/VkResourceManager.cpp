@@ -5,6 +5,7 @@
 
 #include "VkResourceManager.h"
 #include "VkDeviceContext.h"
+#include <SDL3/SDL.h>
 #include <core/error/InfError.h>
 #include <platform/filesystem/InfPath.h>
 
@@ -23,6 +24,27 @@ namespace infengine
 {
 namespace vk
 {
+
+namespace
+{
+
+void WaitForFencePumpingEvents(VkDevice device, VkFence fence)
+{
+    constexpr uint64_t kPollTimeoutNs = 50'000'000; // 50 ms
+    while (true) {
+        VkResult result = vkWaitForFences(device, 1, &fence, VK_TRUE, kPollTimeoutNs);
+        if (result == VK_SUCCESS) {
+            return;
+        }
+        if (result != VK_TIMEOUT) {
+            INFLOG_ERROR("VkResourceManager::EndSingleTimeCommands fence wait failed: ", result);
+            return;
+        }
+        SDL_PumpEvents();
+    }
+}
+
+} // namespace
 
 // ============================================================================
 // Constructor / Destructor / Move
@@ -551,13 +573,22 @@ void VkResourceManager::EndSingleTimeCommands(VkCommandBuffer cmdBuffer)
 {
     vkEndCommandBuffer(cmdBuffer);
 
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence submitFence = VK_NULL_HANDLE;
+    vkCreateFence(m_device, &fenceInfo, nullptr, &submitFence);
+
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmdBuffer;
 
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(m_graphicsQueue);
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, submitFence);
+    WaitForFencePumpingEvents(m_device, submitFence);
+
+    if (submitFence != VK_NULL_HANDLE) {
+        vkDestroyFence(m_device, submitFence, nullptr);
+    }
 
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmdBuffer);
 }

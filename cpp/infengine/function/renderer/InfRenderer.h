@@ -226,6 +226,14 @@ class InfRenderer
         m_preGuiCallback = std::move(callback);
     }
 
+    /// @brief Set a callback invoked each frame AFTER VkCore::DrawFrame() + EndFrame().
+    /// Heavy scene-loading work runs here so that it occurs between frames.
+    /// The Python callback calls engine.pump_events() internally when needed.
+    void SetPostDrawCallback(std::function<void()> callback)
+    {
+        m_postDrawCallback = std::move(callback);
+    }
+
     /// @brief Get current present mode (0=IMMEDIATE, 1=MAILBOX, 2=FIFO, 3=FIFO_RELAXED)
     int GetPresentMode() const;
 
@@ -262,6 +270,11 @@ class InfRenderer
     bool m_gameCameraEnabled = false;
     bool m_sceneViewVisible = true; ///< Set from Python scene_view_panel visibility
 
+    /// Per-frame cached game camera pointer, lazily resolved once per frame
+    /// by FindGameCameraCached() and cleared at the start of each DrawFrame.
+    class Camera *m_cachedGameCamera = nullptr;
+    bool m_gameCameraCacheValid = false;
+
     // Per-camera shadow VP data for multi-camera shadow isolation.
     // Editor camera shadow data goes into m_lightCollector (default path).
     // Game camera shadow data is stored here and patched into the lighting
@@ -296,10 +309,19 @@ class InfRenderer
     /// Returns the highest-priority active Camera (by depth), excluding the editor camera.
     class Camera *FindGameCamera();
 
+    /// @brief Per-frame cached version of FindGameCamera().
+    /// First call per frame does the actual discovery; subsequent calls return cached result.
+    class Camera *FindGameCameraCached();
+
     /// Callback invoked once per frame BEFORE GUI::BuildFrame().
     /// Used by Python to tick DeferredTaskRunner so that scene-mutating
     /// operations (deserialize, scene load) complete before any ImGui
     /// panel renders — preventing stale-reference hangs.
     std::function<void()> m_preGuiCallback;
+
+    /// Callback invoked once per frame AFTER VkCore::DrawFrame() + EndFrame().
+    /// Used by Python to run heavy scene loads between frames, avoiding
+    /// Windows "Not Responding" by running between SDL_PumpEvents() calls.
+    std::function<void()> m_postDrawCallback;
 };
 } // namespace infengine

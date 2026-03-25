@@ -233,6 +233,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "build.cancelled":                  {"en": "Build cancelled.",          "zh": "构建已取消。"},
     "build.failed":                     {"en": "Build failed: {err}",       "zh": "构建失败: {err}"},
     "build.succeeded":                  {"en": "Build succeeded → {path}",  "zh": "构建成功 → {path}"},
+    "build.completed_log":              {"en": "Build completed in {seconds:.2f}s: {path}", "zh": "构建完成，用时 {seconds:.2f} 秒：{path}"},
     "build.open_folder":                {"en": "Open Folder",               "zh": "打开文件夹"},
     "build.build":                      {"en": "Build",                     "zh": "构建"},
     "build.build_and_run":              {"en": "Build And Run",             "zh": "构建并运行"},

@@ -1368,6 +1368,7 @@ class UIEditorPanel(EditorPanel):
         """Create a new Canvas GameObject in the scene."""
         from InfEngine.lib import SceneManager
         from InfEngine.ui import UICanvas as UICanvasCls
+        from InfEngine.ui.ui_canvas_utils import invalidate_canvas_cache
         scene = SceneManager.instance().get_active_scene()
         if scene is None:
             return
@@ -1378,6 +1379,7 @@ class UIEditorPanel(EditorPanel):
             go = scene.create_game_object("Canvas")
             if go:
                 go.add_py_component(UICanvasCls())
+                invalidate_canvas_cache()
                 # Select the new canvas in hierarchy
                 if self._hierarchy_panel:
                     self._hierarchy_panel.set_selected_object_by_id(go.id)
@@ -1398,6 +1400,7 @@ class UIEditorPanel(EditorPanel):
             undo_label: Description for the undo system.
         """
         from InfEngine.lib import SceneManager
+        from InfEngine.ui.ui_canvas_utils import invalidate_canvas_cache
         scene = SceneManager.instance().get_active_scene()
         if scene is None:
             return
@@ -1428,6 +1431,7 @@ class UIEditorPanel(EditorPanel):
                         comp.x = float(default_pos[0])
                         comp.y = float(default_pos[1])
                 self._select_element(comp)
+                invalidate_canvas_cache()
                 if self._hierarchy_panel:
                     self._hierarchy_panel.set_selected_object_by_id(go.id)
                     self._hierarchy_panel._pending_expand_id = canvas_go.id

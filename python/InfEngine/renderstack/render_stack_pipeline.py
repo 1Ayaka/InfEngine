@@ -40,6 +40,10 @@ class RenderStackPipeline(RenderPipeline):
         # the fallback pipeline has no user passes to change).
         self._fallback_desc = None
         self._fallback_pipeline = None
+        # Cache for _find_render_stack to avoid O(N) scene scan every frame.
+        self._cached_stack = None
+        self._cached_stack_version: int = -1
+        self._cached_stack_scene_id: int = 0
 
     def render(self, context, cameras) -> None:
         """每帧由引擎调用。"""
@@ -60,8 +64,9 @@ class RenderStackPipeline(RenderPipeline):
 
         查找策略（按优先级）：
         1. 类级单例 ``RenderStack._active_instance``（O(1)）
-        2. 遍历 ``context.scene`` 中所有 GameObject 的 Python 组件
-        3. ``None``（使用 fallback）
+        2. 缓存的扫描结果（O(1)，按 structure_version 失效）
+        3. 遍历场景中所有 GameObject 的 Python 组件（O(N)，仅在结构变化时）
+        4. ``None``（使用 fallback）
         """
         from InfEngine.renderstack.render_stack import RenderStack
 
@@ -70,19 +75,30 @@ class RenderStackPipeline(RenderPipeline):
         if inst is not None:
             return inst
 
-        # Slow path: scan scene (e.g. singleton not yet set because
-        # awake() hasn't run yet)
         scene = context.scene
-
         if scene is None:
             return None
 
+        # Fast path: use cached scan result if structure hasn't changed
+        scene_id = id(scene)
+        ver = scene.structure_version
+        if scene_id == self._cached_stack_scene_id and ver == self._cached_stack_version:
+            return self._cached_stack
+
+        # Slow path: scan scene (only when structure changes)
+        found = None
         for obj in scene.get_all_objects():
             for comp in obj.get_py_components():
                 if isinstance(comp, RenderStack):
-                    return comp
+                    found = comp
+                    break
+            if found is not None:
+                break
 
-        return None
+        self._cached_stack = found
+        self._cached_stack_version = ver
+        self._cached_stack_scene_id = scene_id
+        return found
 
     def _render_fallback(self, context, camera) -> None:
         """无 RenderStack 时的 fallback 渲染。

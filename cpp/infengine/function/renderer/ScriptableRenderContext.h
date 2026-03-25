@@ -118,7 +118,12 @@ class ScriptableRenderContext
     /// @brief Submit all culling results as full draw calls + execute graph.
     /// Replaces the DrawRenderers() + DrawSkybox() + Submit() combo.
     /// DrawCall filtering is done by RenderGraph pass callbacks.
-    void SubmitCulling(const CullingResults &culling);
+    /// Accepts by value to enable move semantics from callers.
+    void SubmitCulling(CullingResults culling);
+
+    /// @brief Single-call render path: setup + cull + apply_graph + submit.
+    /// Avoids 3 extra Python→C++ round-trips compared to calling each step separately.
+    void RenderWithGraph(Camera *camera, const RenderGraphDescription &desc);
 
     // ====================================================================
     // Phase 2: CommandBuffer Integration

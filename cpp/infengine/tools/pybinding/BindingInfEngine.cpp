@@ -13,6 +13,7 @@
 #include <function/renderer/gui/InfScreenUIRenderer.h>
 #include <function/scene/EditorCameraController.h>
 #include <glm/glm.hpp>
+#include <SDL3/SDL.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -289,6 +290,33 @@ PYBIND11_MODULE(_InfEngine, m)
             py::arg("callback"),
             "Set a Python callback invoked each frame before GUI rendering.\n"
             "Used for DeferredTaskRunner to ensure scene mutations finish before panels render.")
+        .def(
+            "set_post_draw_callback",
+            [](InfEngine &self, py::object callback) {
+                auto *r = self.GetRenderer();
+                if (!r)
+                    return;
+                if (callback.is_none()) {
+                    r->SetPostDrawCallback(nullptr);
+                } else {
+                    py::function fn = py::cast<py::function>(callback);
+                    r->SetPostDrawCallback([fn]() {
+                        try {
+                            fn();
+                        } catch (py::error_already_set &e) {
+                            e.restore();
+                        }
+                    });
+                }
+            },
+            py::arg("callback"),
+            "Set a Python callback invoked each frame after GPU submit + present.\n"
+            "Heavy scene loads run here, sandwiched by SDL_PumpEvents to prevent\n"
+            "Windows from flagging the application as Not Responding.")
+        .def(
+            "pump_events",
+            [](InfEngine & /*self*/) { SDL_PumpEvents(); },
+            "Pump the OS message queue to prevent Windows Not Responding during long operations")
         .def("set_log_level", &InfEngine::SetLogLevel)
         .def(
             "register_gui_renderable",
@@ -784,6 +812,10 @@ PYBIND11_MODULE(_InfEngine, m)
                 return r ? r->GetSceneRenderGraph() : nullptr;
             },
             py::return_value_policy::reference, "Get the scene render graph for pass configuration");
+
+    // ── Logging bridge: let Python write to the C++ InfLog (engine.log) ──
+    m.def("inflog_warn", [](const std::string &msg) { INFLOG_WARN(msg); },
+          py::arg("msg"), "Write a WARN-level message to the engine log.");
 
     // Register all binding modules
     RegisterGUIBindings(m);

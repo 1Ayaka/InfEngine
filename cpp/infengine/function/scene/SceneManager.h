@@ -15,6 +15,8 @@ namespace infengine
 
 // Forward declaration for MeshRenderer registry
 class MeshRenderer;
+// Forward declaration for Light registry
+class Light;
 
 /**
  * @brief SceneManager - singleton that manages all scenes.
@@ -217,6 +219,18 @@ class SceneManager
     /// Mark all MeshRenderers referencing a given mesh GUID as buffer-dirty.
     void MarkMeshRenderersDirtyForAsset(const std::string &meshGuid);
 
+    /// Register a Light so lighting can iterate it directly.
+    void RegisterLight(Light *light);
+
+    /// Unregister a Light (e.g. OnDisable / destruction).
+    void UnregisterLight(Light *light);
+
+    /// Read-only access to the active lights registry.
+    [[nodiscard]] const std::vector<Light *> &GetActiveLights() const
+    {
+        return m_activeLights;
+    }
+
   private:
     SceneManager();
     ~SceneManager() = default;
@@ -266,6 +280,10 @@ class SceneManager
     // MeshRenderer component registry — populated by MeshRenderer OnEnable/OnDisable.
     // Avoids per-frame GetAllObjects() + dynamic_cast in CollectRenderables.
     std::vector<MeshRenderer *> m_activeMeshRenderers;
+
+    // Light component registry — populated by Light OnEnable/OnDisable.
+    // Avoids per-frame GetAllObjects() + GetComponent<Light>() in CollectLights/ComputeShadowVP.
+    std::vector<Light *> m_activeLights;
 
     FrameProfile m_lastFrameProfile;
 };

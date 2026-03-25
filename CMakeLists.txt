@@ -63,8 +63,35 @@ target_include_directories(_InfEngine PRIVATE
 
 # Set UTF-8 encoding for MSVC to avoid C4819 warnings
 if(MSVC)
-    target_compile_options(_InfEngine PRIVATE /utf-8)
+    target_compile_options(_InfEngine PRIVATE
+        /utf-8
+        $<$<CONFIG:Release>:/O2>
+        $<$<CONFIG:Release>:/Ob2>
+        $<$<CONFIG:Release>:/Oi>
+        $<$<CONFIG:Release>:/Ot>
+        $<$<CONFIG:Release>:/Oy>
+        $<$<CONFIG:Release>:/Gy>
+        $<$<CONFIG:Release>:/Gw>
+        $<$<CONFIG:Release>:/GL>
+    )
+
+    target_link_options(_InfEngine PRIVATE
+        $<$<CONFIG:Release>:/LTCG>
+        $<$<CONFIG:Release>:/OPT:REF>
+        $<$<CONFIG:Release>:/OPT:ICF>
+    )
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(_InfEngine PRIVATE
+        $<$<CONFIG:Release>:-O3>
+    )
+
+    target_link_options(_InfEngine PRIVATE
+        $<$<CONFIG:Release>:-flto>
+    )
 endif()
+
+# Prefer whole-program optimization in Release when the toolchain supports it.
+set_property(TARGET _InfEngine PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 
 # ------------------------------------------------------------------------------
 # SPIRV-Cross (from Vulkan SDK)
@@ -165,6 +192,15 @@ add_custom_command(TARGET _InfEngine POST_BUILD
 #   cmake --build --preset release --target infengine_hub
 # Output: ${CMAKE_SOURCE_DIR}/dist/InfEngine Hub/
 # ------------------------------------------------------------------------------
+add_custom_target(prepare_bundled_python_runtime
+    COMMAND ${CMAKE_COMMAND} -E echo "Ensuring bundled Python 3.12 runtime is available..."
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/packaging/stage_bundled_python_runtime.py"
+        --dest-root "${CMAKE_SOURCE_DIR}/packaging/runtime/python312"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Stage Python 3.12 into packaging/runtime/python312 when missing"
+)
+
 add_custom_target(infengine_hub
     COMMAND ${CMAKE_COMMAND} -E echo "Packaging InfEngine Hub with PyInstaller..."
     COMMAND ${Python3_EXECUTABLE} -m PyInstaller
@@ -174,6 +210,7 @@ add_custom_target(infengine_hub
         --clean
         --noconfirm
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/packaging"
+    DEPENDS prepare_bundled_python_runtime
     COMMENT "Build InfEngine Hub standalone application → dist/InfEngine Hub/"
 )
 

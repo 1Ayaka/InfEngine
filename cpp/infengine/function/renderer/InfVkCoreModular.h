@@ -294,6 +294,10 @@ class InfVkCoreModular
     void EnsureObjectBuffers(uint64_t objectId, const std::vector<Vertex> &vertices,
                              const std::vector<uint32_t> &indices, bool forceUpdate);
 
+    /// @brief Advance the frame counter for EnsureObjectBuffers dedup.
+    /// Call once per frame before any Render calls.
+    void AdvanceEnsureFrame() { ++m_ensureFrameCounter; }
+
     /// @brief Remove per-object buffers for objects that are no longer active.
     /// Call once per frame after SetDrawCalls with the current active draw calls.
     void CleanupUnusedBuffers(const std::vector<DrawCall> &activeDrawCalls);
@@ -543,6 +547,14 @@ class InfVkCoreModular
         return m_activeShadowDescSet;
     }
 
+    /// @brief Override shadow cascade VPs for CPU-side frustum culling in DrawShadowCasters.
+    /// Pass nullptr to clear the override (falls back to m_lightCollector).
+    void SetShadowCascadeVPOverride(const glm::mat4 *vpArray, uint32_t count)
+    {
+        m_shadowCascadeVPOverride = vpArray;
+        m_shadowCascadeVPOverrideCount = count;
+    }
+
     // ========================================================================
     // Lighting System
     // ========================================================================
@@ -594,6 +606,11 @@ class InfVkCoreModular
     /// have completed.
     void DeferDeletion(std::function<void()> deleter);
 
+    [[nodiscard]] FrameDeletionQueue &GetDeletionQueue()
+    {
+        return m_deletionQueue;
+    }
+
     /// @brief Inline-update the lighting UBO in a command buffer.
     ///
     /// Uses vkCmdUpdateBuffer with proper pipeline barriers so that all
@@ -615,6 +632,12 @@ class InfVkCoreModular
     /// independently computed and patched before its render graph executes.
     void CmdUpdateShadowDataForCamera(VkCommandBuffer cmdBuf, const glm::mat4 *lightVPs, uint32_t cascadeCount,
                                       const float *cascadeSplits, float mapResolution);
+
+    /// @brief Restore the lighting UBO shadow fields and per-cascade shadow
+    /// UBOs back to the editor camera values that were staged at the start of
+    /// the frame.  Called after the game view finishes rendering so that
+    /// subsequent passes and cross-frame GPU overlap see consistent editor data.
+    void CmdRestoreEditorShadowData(VkCommandBuffer cmdBuf);
 
     /// @brief Cache the lighting UBO data for inline command-buffer update.
     ///
@@ -672,16 +695,19 @@ class InfVkCoreModular
     // Record breakdown: [4] UBO  [5] SceneGraph  [6] PostScene  [7] GUIGraph
     // Scene draw breakdown: [8] FilteredTotal  [9] Filter  [10] Sort  [11] Draw
     // Shadow breakdown: [12] ShadowTotal  [13] ShadowFilter  [14] ShadowDraw
-    static constexpr int kDrawSubSlots = 15;
+    // Shadow sub-breakdown: [15] Sort  [16] Cull  [17] Upload  [18] Batch
+    static constexpr int kDrawSubSlots = 19;
 #if INFENGINE_FRAME_PROFILE
     double m_drawSubMs[kDrawSubSlots] = {};
     int m_drawSubCount = 0;
     uint64_t m_drawSceneFilteredCalls = 0;
     uint64_t m_drawSceneFilteredEligible = 0;
     uint64_t m_drawSceneFilteredIssued = 0;
+    uint64_t m_drawFilteredActualDraws = 0;
     uint64_t m_drawShadowCalls = 0;
     uint64_t m_drawShadowEligible = 0;
     uint64_t m_drawShadowIssued = 0;
+    uint64_t m_drawShadowActualDraws = 0;
 #endif
 
   public:
@@ -694,14 +720,18 @@ class InfVkCoreModular
         return m_drawSubCount;
     }
     void GetDrawSubCounters(uint64_t &filteredCalls, uint64_t &filteredEligible, uint64_t &filteredIssued,
-                            uint64_t &shadowCalls, uint64_t &shadowEligible, uint64_t &shadowIssued) const
+                            uint64_t &filteredActualDraws,
+                            uint64_t &shadowCalls, uint64_t &shadowEligible, uint64_t &shadowIssued,
+                            uint64_t &shadowActualDraws) const
     {
         filteredCalls = m_drawSceneFilteredCalls;
         filteredEligible = m_drawSceneFilteredEligible;
         filteredIssued = m_drawSceneFilteredIssued;
+        filteredActualDraws = m_drawFilteredActualDraws;
         shadowCalls = m_drawShadowCalls;
         shadowEligible = m_drawShadowEligible;
         shadowIssued = m_drawShadowIssued;
+        shadowActualDraws = m_drawShadowActualDraws;
     }
     void ResetDrawSubTimings()
     {
@@ -711,9 +741,11 @@ class InfVkCoreModular
         m_drawSceneFilteredCalls = 0;
         m_drawSceneFilteredEligible = 0;
         m_drawSceneFilteredIssued = 0;
+        m_drawFilteredActualDraws = 0;
         m_drawShadowCalls = 0;
         m_drawShadowEligible = 0;
         m_drawShadowIssued = 0;
+        m_drawShadowActualDraws = 0;
     }
 #endif
 
@@ -787,12 +819,14 @@ class InfVkCoreModular
 
     struct SharedMeshKey
     {
-        const void *verticesPtr = nullptr;
-        const void *indicesPtr = nullptr;
+        size_t contentHash = 0;
+        size_t vertexCount = 0;
+        size_t indexCount = 0;
 
         bool operator==(const SharedMeshKey &other) const noexcept
         {
-            return verticesPtr == other.verticesPtr && indicesPtr == other.indicesPtr;
+            return contentHash == other.contentHash && vertexCount == other.vertexCount &&
+                   indexCount == other.indexCount;
         }
     };
 
@@ -800,11 +834,33 @@ class InfVkCoreModular
     {
         size_t operator()(const SharedMeshKey &key) const noexcept
         {
-            const size_t h1 = std::hash<const void *>{}(key.verticesPtr);
-            const size_t h2 = std::hash<const void *>{}(key.indicesPtr);
-            return h1 ^ (h2 << 1);
+            size_t h = key.contentHash;
+            h ^= std::hash<size_t>{}(key.vertexCount) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= std::hash<size_t>{}(key.indexCount) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
         }
     };
+
+    /// @brief FNV-1a content hash for mesh data deduplication.
+    static size_t HashMeshContent(const void *vertexData, size_t vertexBytes,
+                                  const void *indexData, size_t indexBytes)
+    {
+        // FNV-1a 64-bit
+        constexpr size_t fnvOffset = 14695981039346656037ULL;
+        constexpr size_t fnvPrime = 1099511628211ULL;
+        size_t hash = fnvOffset;
+        const auto *bytes = static_cast<const uint8_t *>(vertexData);
+        for (size_t i = 0; i < vertexBytes; ++i) {
+            hash ^= bytes[i];
+            hash *= fnvPrime;
+        }
+        bytes = static_cast<const uint8_t *>(indexData);
+        for (size_t i = 0; i < indexBytes; ++i) {
+            hash ^= bytes[i];
+            hash *= fnvPrime;
+        }
+        return hash;
+    }
 
     /// @brief Shared vertex/index buffer pair keyed by mesh storage identity.
     struct SharedMeshBuffers
@@ -823,11 +879,15 @@ class InfVkCoreModular
         size_t vertexCount = 0;
         size_t indexCount = 0;
         SharedMeshKey sharedKey;
+        const void *lastVertexPtr = nullptr; // fast-path: skip hash if pointer unchanged
+        const void *lastIndexPtr = nullptr;
+        uint32_t ensuredOnFrame = 0; // frame-stamp: skip duplicate EnsureObjectBuffers per frame
     };
 
     /// @brief Map from objectId → persistent GPU buffers.
     /// Objects with identical mesh storage share the same GPU buffers.
     std::unordered_map<uint64_t, PerObjectBuffers> m_perObjectBuffers;
+    uint32_t m_ensureFrameCounter = 0; // incremented once per frame
 
     /// @brief Shared mesh GPU buffer cache keyed by vertex/index storage pointers.
     std::unordered_map<SharedMeshKey, SharedMeshBuffers, SharedMeshKeyHash> m_sharedMeshBuffers;
@@ -868,6 +928,7 @@ class InfVkCoreModular
         AABB worldBounds;  // Cached for per-cascade frustum culling
     };
     std::vector<ShadowDraw> m_shadowDrawScratch;
+    std::vector<uint32_t> m_shadowCascadeVisible; ///< Per-cascade visible indices into m_shadowDrawScratch
 
     // Pre/Post scene render callbacks
     PostSceneRenderCallback m_postSceneRenderCallback;
@@ -899,6 +960,11 @@ class InfVkCoreModular
     VkDescriptorSetLayout m_perViewDescSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_perViewDescPool = VK_NULL_HANDLE;
     VkDescriptorSet m_activeShadowDescSet = VK_NULL_HANDLE; ///< Currently active per-view desc for draw calls
+
+    /// Shadow cascade VP override for DrawShadowCasters CPU-side frustum culling.
+    /// When non-null, overrides m_lightCollector cascade VPs (used for game camera).
+    const glm::mat4 *m_shadowCascadeVPOverride = nullptr;
+    uint32_t m_shadowCascadeVPOverrideCount = 0;
 
     /// @brief Create per-view descriptor set layout and pool.
     bool CreatePerViewDescriptorResources();
@@ -938,6 +1004,34 @@ class InfVkCoreModular
     void DestroyGlobalsDescriptorResources();
     /// @brief Push staged globals to GPU via vkCmdUpdateBuffer.
     void CmdUpdateGlobals(VkCommandBuffer cmdBuf);
+
+    // ========================================================================
+    // Instance Buffer (set 2, binding 1) — per-frame instanced transforms
+    // ========================================================================
+    struct InstanceBufferFrame
+    {
+        std::unique_ptr<vk::VkBufferHandle> buffer;
+        VkDeviceSize capacity = 0; ///< Number of mat4 instances, not bytes
+    };
+    std::vector<InstanceBufferFrame> m_instanceBuffers; ///< One per frame-in-flight
+    static constexpr size_t INSTANCE_BUFFER_INITIAL_CAPACITY = 256;
+
+    /// @brief Running write offset into the instance SSBO (reset per frame).
+    uint32_t m_instanceWriteOffset = 0;
+    /// @brief Frame counter for detecting new frames and resetting offset.
+    uint64_t m_lastInstanceFrame = UINT64_MAX;
+
+    /// @brief Ensure the current frame's instance buffer can hold at least \p instanceCount matrices.
+    /// Preserves existing data when growing.
+    void EnsureInstanceBufferCapacity(uint32_t frameIndex, size_t instanceCount);
+    /// @brief Update the globals descriptor set binding 1 with the current frame's instance buffer.
+    void UpdateInstanceBufferDescriptor(uint32_t frameIndex);
+
+public:
+    /// @brief Pre-allocate the instance SSBO for the current frame and update
+    /// its descriptor set.  Must be called BEFORE any draws that bind the
+    /// globals descriptor set (i.e. before the render-graph executor runs).
+    void PreallocateInstances(size_t totalDrawCalls);
 };
 
 } // namespace infengine

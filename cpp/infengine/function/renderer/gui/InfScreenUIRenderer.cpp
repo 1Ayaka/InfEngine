@@ -702,8 +702,18 @@ void InfScreenUIRenderer::EnsureBuffers(VkDeviceSize vertexSize, VkDeviceSize in
 {
     // Grow buffers if needed (with 1.5x overalloc to reduce reallocations)
     if (m_vertexBuffer == VK_NULL_HANDLE || m_vertexBufferSize < vertexSize) {
-        if (m_vertexBuffer)
-            vmaDestroyBuffer(m_allocator, m_vertexBuffer, m_vertexAlloc);
+        if (m_vertexBuffer) {
+            VkBuffer oldBuffer = m_vertexBuffer;
+            VmaAllocation oldAlloc = m_vertexAlloc;
+            if (m_deletionQueue) {
+                VmaAllocator allocator = m_allocator;
+                m_deletionQueue->Push([allocator, oldBuffer, oldAlloc]() {
+                    vmaDestroyBuffer(allocator, oldBuffer, oldAlloc);
+                });
+            } else {
+                vmaDestroyBuffer(m_allocator, m_vertexBuffer, m_vertexAlloc);
+            }
+        }
 
         VkDeviceSize allocSize = vertexSize + (vertexSize >> 1); // 1.5x
 
@@ -721,8 +731,18 @@ void InfScreenUIRenderer::EnsureBuffers(VkDeviceSize vertexSize, VkDeviceSize in
     }
 
     if (m_indexBuffer == VK_NULL_HANDLE || m_indexBufferSize < indexSize) {
-        if (m_indexBuffer)
-            vmaDestroyBuffer(m_allocator, m_indexBuffer, m_indexAlloc);
+        if (m_indexBuffer) {
+            VkBuffer oldBuffer = m_indexBuffer;
+            VmaAllocation oldAlloc = m_indexAlloc;
+            if (m_deletionQueue) {
+                VmaAllocator allocator = m_allocator;
+                m_deletionQueue->Push([allocator, oldBuffer, oldAlloc]() {
+                    vmaDestroyBuffer(allocator, oldBuffer, oldAlloc);
+                });
+            } else {
+                vmaDestroyBuffer(m_allocator, m_indexBuffer, m_indexAlloc);
+            }
+        }
 
         VkDeviceSize allocSize = indexSize + (indexSize >> 1);
 

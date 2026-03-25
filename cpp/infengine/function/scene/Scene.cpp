@@ -3,6 +3,7 @@
 #include "MeshRenderer.h"
 #include "SceneManager.h"
 #include "TransformECSStore.h"
+#include <SDL3/SDL.h>
 #include <algorithm>
 #include <core/log/InfLog.h>
 #include <fstream>
@@ -909,11 +910,17 @@ bool Scene::Deserialize(const std::string &jsonStr)
         };
 
         if (j.contains("objects") && j["objects"].is_array()) {
+            int objectCounter = 0;
             for (const auto &objJson : j["objects"]) {
                 auto obj = buildObject(buildObject, objJson);
                 if (obj) {
                     registerObject(registerObject, obj.get());
                     m_rootObjects.push_back(std::move(obj));
+                }
+                // Pump the OS message queue periodically during heavy
+                // deserialization to prevent Windows "Not Responding".
+                if (++objectCounter % 8 == 0) {
+                    SDL_PumpEvents();
                 }
             }
         }

@@ -79,9 +79,10 @@ CullingResults ScriptableRenderContext::Cull(Camera *camera)
 
     DrawCallResult fullResult;
     if (camera && camera != editorCam) {
-        // Non-editor camera (e.g. Game View camera): perform independent
-        // frustum culling against this camera's view-projection matrix.
-        fullResult = bridge.PrepareAndBuildForCamera(camera);
+        // Non-editor camera (e.g. Game View camera): reuse editor camera's
+        // already-collected renderables, re-cull with this camera's frustum.
+        // Avoids expensive CollectRenderables (GetWorldMatrix, GetWorldBounds, etc.)
+        fullResult = bridge.CullAndBuildForCamera(camera);
     } else {
         // Editor camera: reuse the already-prepared frame data from
         // SceneRenderBridge::PrepareFrame() (called earlier in DrawFrame).
@@ -113,18 +114,16 @@ void ScriptableRenderContext::ApplyGraph(const RenderGraphDescription &desc)
     }
 }
 
-void ScriptableRenderContext::SubmitCulling(const CullingResults &culling)
+void ScriptableRenderContext::SubmitCulling(CullingResults culling)
 {
     if (m_submitted) {
         INFLOG_WARN("ScriptableRenderContext::SubmitCulling() called after already submitted");
         return;
     }
 
-    // Collect ALL draw calls from culling results (no queue-range filtering).
-    // Filtering is handled by RenderGraph pass callbacks (DrawSceneFiltered).
-    for (const auto &dc : culling.drawCalls) {
-        m_orderedDrawCalls.push_back(dc);
-    }
+    // Move draw calls directly — avoids 1000+ shared_ptr atomic refcount ops.
+    m_orderedDrawCalls = std::move(culling.drawCalls);
+    m_orderedDrawCalls.reserve(m_orderedDrawCalls.size() + 16);
 
     // Append skybox draw call only when ClearFlags == Skybox (or no camera set)
     bool drawSkybox = true;
@@ -233,6 +232,14 @@ void ScriptableRenderContext::SubmitCulling(const CullingResults &culling)
     }
 
     m_submitted = true;
+}
+
+void ScriptableRenderContext::RenderWithGraph(Camera *camera, const RenderGraphDescription &desc)
+{
+    SetupCameraProperties(camera);
+    CullingResults culling = Cull(camera);
+    ApplyGraph(desc);
+    SubmitCulling(std::move(culling));
 }
 
 // ============================================================================

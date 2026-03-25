@@ -1,0 +1,65 @@
+{
+    "meta_version": 2,
+    "metadata": {
+        "classes": {
+            "type": "string",
+            "value": "PassEntry,RenderStack"
+        },
+        "component_classes": {
+            "type": "string",
+            "value": "RenderStack"
+        },
+        "content_hash": {
+            "type": "string",
+            "value": "d4daca5819d0a057"
+        },
+        "file_extension": {
+            "type": "string",
+            "value": ".py"
+        },
+        "file_path": {
+            "type": "string",
+            "value": "E:\\project\\InfEngine\\python\\InfEngine\\renderstack\\render_stack.py"
+        },
+        "file_size": {
+            "type": "size_t",
+            "value": 33578
+        },
+        "file_type": {
+            "type": "string",
+            "value": "script"
+        },
+        "guid": {
+            "type": "string",
+            "value": "7a9ad89bf8c2c56b684641b80a2d2636"
+        },
+        "has_components": {
+            "type": "bool",
+            "value": true
+        },
+        "importer_version": {
+            "type": "int",
+            "value": 1
+        },
+        "imports": {
+            "type": "string",
+            "value": "InfEngine,__future__,dataclasses,enum,importlib,inspect,json,logging,sys,typing,warnings"
+        },
+        "language": {
+            "type": "string",
+            "value": "python"
+        },
+        "last_modified": {
+            "type": "string",
+            "value": "1774390615"
+        },
+        "line_count": {
+            "type": "size_t",
+            "value": 807
+        },
+        "resource_type": {
+            "type": "enum infengine::ResourceType",
+            "value": "Script"
+        }
+    }
+}

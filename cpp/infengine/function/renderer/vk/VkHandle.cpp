@@ -4,6 +4,7 @@
  */
 
 #include "VkHandle.h"
+#include <SDL3/SDL.h>
 #include <algorithm>
 #include <cmath>
 
@@ -11,6 +12,27 @@ namespace infengine
 {
 namespace vk
 {
+
+namespace
+{
+
+void WaitForFencePumpingEvents(VkDevice device, VkFence fence, const char *context)
+{
+    constexpr uint64_t kPollTimeoutNs = 50'000'000; // 50 ms
+    while (true) {
+        VkResult result = vkWaitForFences(device, 1, &fence, VK_TRUE, kPollTimeoutNs);
+        if (result == VK_SUCCESS) {
+            return;
+        }
+        if (result != VK_TIMEOUT) {
+            INFLOG_ERROR(context, ": vkWaitForFences failed: ", result);
+            return;
+        }
+        SDL_PumpEvents();
+    }
+}
+
+} // namespace
 
 // ============================================================================
 // VkBufferHandle Implementation
@@ -552,7 +574,7 @@ bool VkTexture::CreateFromPixels(VmaAllocator allocator, VkDevice device, VkPhys
     submitInfo.pCommandBuffers = &cmdBuffer;
 
     vkQueueSubmit(graphicsQueue, 1, &submitInfo, uploadFence);
-    vkWaitForFences(device, 1, &uploadFence, VK_TRUE, UINT64_MAX);
+    WaitForFencePumpingEvents(device, uploadFence, "VkTexture::CreateFromPixels upload");
 
     vkDestroyFence(device, uploadFence, nullptr);
     vkFreeCommandBuffers(device, cmdPool, 1, &cmdBuffer);

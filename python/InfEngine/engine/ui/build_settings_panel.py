@@ -79,6 +79,7 @@ def _win32_pick_folder(title: str) -> Optional[str]:
     import ctypes
     import ctypes.wintypes as wt
 
+    COINIT_APARTMENTTHREADED = 0x2
     BIF_RETURNONLYFSDIRS = 0x00000001
     BIF_NEWDIALOGSTYLE = 0x00000040
     MAX_PATH = 260
@@ -103,22 +104,41 @@ def _win32_pick_folder(title: str) -> Optional[str]:
 
     shell32 = ctypes.windll.shell32
     ole32 = ctypes.windll.ole32
-    pidl = shell32.SHBrowseForFolderW(ctypes.byref(browse))
-    if not pidl:
-        return None
+    user32 = ctypes.windll.user32
+    shell32.SHBrowseForFolderW.argtypes = [ctypes.POINTER(BROWSEINFOW)]
+    shell32.SHBrowseForFolderW.restype = ctypes.c_void_p
+    shell32.SHGetPathFromIDListW.argtypes = [ctypes.c_void_p, wt.LPWSTR]
+    shell32.SHGetPathFromIDListW.restype = wt.BOOL
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wt.DWORD]
+    ole32.CoInitializeEx.restype = ctypes.HRESULT
+    ole32.CoUninitialize.argtypes = []
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    ole32.CoTaskMemFree.restype = None
+
+    browse.hwndOwner = user32.GetActiveWindow()
+
+    coinit_hr = ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+    should_uninitialize = coinit_hr in (0, 1)
     try:
+        pidl = shell32.SHBrowseForFolderW(ctypes.byref(browse))
+        if not pidl:
+            return None
         path_buf = ctypes.create_unicode_buffer(MAX_PATH)
         if shell32.SHGetPathFromIDListW(pidl, path_buf):
             return path_buf.value
         return None
     finally:
-        ole32.CoTaskMemFree(pidl)
+        if 'pidl' in locals() and pidl:
+            ole32.CoTaskMemFree(pidl)
+        if should_uninitialize:
+            ole32.CoUninitialize()
 
 
 def _win32_pick_file(title: str, filter_text: str) -> Optional[str]:
     import ctypes
     import ctypes.wintypes as wt
 
+    COINIT_APARTMENTTHREADED = 0x2
     OFN_FILEMUSTEXIST = 0x00001000
     OFN_PATHMUSTEXIST = 0x00000800
     OFN_NOCHANGEDIR = 0x00000008
@@ -160,10 +180,25 @@ def _win32_pick_file(title: str, filter_text: str) -> Optional[str]:
     ofn.nMaxFile = MAX_PATH
     ofn.lpstrTitle = title
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER
+    ofn.hwndOwner = ctypes.windll.user32.GetActiveWindow()
 
-    if ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
-        return buf.value
-    return None
+    comdlg32 = ctypes.windll.comdlg32
+    ole32 = ctypes.windll.ole32
+    comdlg32.GetOpenFileNameW.argtypes = [ctypes.POINTER(OPENFILENAMEW)]
+    comdlg32.GetOpenFileNameW.restype = wt.BOOL
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wt.DWORD]
+    ole32.CoInitializeEx.restype = ctypes.HRESULT
+    ole32.CoUninitialize.argtypes = []
+
+    coinit_hr = ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+    should_uninitialize = coinit_hr in (0, 1)
+    try:
+        if comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+            return buf.value
+        return None
+    finally:
+        if should_uninitialize:
+            ole32.CoUninitialize()
 
 
 def _pick_folder_dialog(title: str) -> Optional[str]:
@@ -172,6 +207,7 @@ def _pick_folder_dialog(title: str) -> Optional[str]:
             return _win32_pick_folder(title)
         except Exception as exc:
             Debug.log_warning(f"Win32 folder dialog failed: {exc}")
+            return None
 
     import tkinter as tk
     from tkinter import filedialog
@@ -196,6 +232,7 @@ def _pick_file_dialog(title: str) -> Optional[str]:
             )
         except Exception as exc:
             Debug.log_warning(f"Win32 open-file dialog failed: {exc}")
+            return None
 
     import tkinter as tk
     from tkinter import filedialog

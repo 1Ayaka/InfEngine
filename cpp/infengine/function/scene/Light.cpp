@@ -1,6 +1,7 @@
 #include "Light.h"
 #include "ComponentFactory.h"
 #include "GameObject.h"
+#include "SceneManager.h"
 #include "Transform.h"
 #include <nlohmann/json.hpp>
 
@@ -11,6 +12,21 @@ namespace infengine
 
 // Register Light component with factory
 INFENGINE_REGISTER_COMPONENT("Light", Light)
+
+Light::~Light()
+{
+    SceneManager::Instance().UnregisterLight(this);
+}
+
+void Light::OnEnable()
+{
+    SceneManager::Instance().RegisterLight(this);
+}
+
+void Light::OnDisable()
+{
+    SceneManager::Instance().UnregisterLight(this);
+}
 
 std::string Light::Serialize() const
 {

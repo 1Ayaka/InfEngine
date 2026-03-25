@@ -92,6 +92,11 @@ class SceneRenderer
     /// @note Vertices remain in model/local space; per-object world transform is applied on GPU via push constants.
     [[nodiscard]] DrawCallResult BuildDrawCalls() const;
 
+    /// @brief Build draw calls by re-culling existing renderables against a different camera.
+    /// Reuses renderables collected by PrepareFrame() to avoid re-collecting world matrices,
+    /// bounds, and materials. Only re-applies frustum culling with the given camera.
+    [[nodiscard]] DrawCallResult BuildDrawCallsForCamera(Camera *camera) const;
+
     // ========================================================================
     // Settings
     // ========================================================================
@@ -156,6 +161,11 @@ class SceneRenderBridge
     /// @param camera The camera to cull and collect renderables for.
     /// @return DrawCallResult with draw calls visible to this camera.
     [[nodiscard]] DrawCallResult PrepareAndBuildForCamera(Camera *camera);
+
+    /// @brief Build draw calls for a camera reusing the editor camera's renderables.
+    /// Avoids re-collecting world matrices, bounds, and materials (from PrepareFrame).
+    /// Only re-applies frustum culling and layer filtering for the given camera.
+    [[nodiscard]] DrawCallResult CullAndBuildForCamera(Camera *camera) const;
 
     /// @brief Build draw calls from the current frame's visible renderables.
     /// Delegates to SceneRenderer::BuildDrawCalls().

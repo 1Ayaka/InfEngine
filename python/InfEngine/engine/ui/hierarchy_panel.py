@@ -4,6 +4,7 @@ Unity-style Hierarchy panel showing scene objects tree.
 
 import json
 import os
+import time
 
 from InfEngine.lib import InfGUIContext
 from InfEngine.engine.i18n import t
@@ -29,6 +30,8 @@ class HierarchyPanel(EditorPanel):
     
     # Drag-drop payload type
     DRAG_DROP_TYPE = "HIERARCHY_GAMEOBJECT"
+    _STALE_ROOT_REFRESH_INTERVAL = 0.12
+    _STALE_ROOT_REFRESH_ROOT_THRESHOLD = 128
     
     def __init__(self, title: str = "Hierarchy"):
         super().__init__(title, window_id="hierarchy")
@@ -56,7 +59,9 @@ class HierarchyPanel(EditorPanel):
         self._rename_focus: bool = False  # True on the first frame to auto-focus the input
         # Root objects cache — avoids re-creating 1024 pybind11 wrappers every frame.
         self._cached_root_objects = None
+        self._cached_scene_id: int = 0
         self._cached_structure_version: int = -1
+        self._last_root_refresh_time: float = 0.0
         # UI Mode: when True, show Canvas trees normally, dim others
         self._ui_mode: bool = False
         self._ui_mode_canvas_root_ids: set = set()  # root IDs that are canvas trees
@@ -65,6 +70,7 @@ class HierarchyPanel(EditorPanel):
         self._cached_canvas_roots = None
         self._clipboard_entries: list[dict] = []
         self._clipboard_cut: bool = False
+        self._frame_dragging: bool = False  # per-frame drag state for perf optimization
     
     def set_on_selection_changed(self, callback):
         """Set callback to be called when selection changes. Callback receives the selected GameObject or None."""
@@ -82,7 +88,9 @@ class HierarchyPanel(EditorPanel):
         """Enter or exit UI Mode.  In UI Mode the hierarchy only shows Canvas trees."""
         self._ui_mode = bool(enabled)
         # Invalidate root-object cache so the filtered list is rebuilt.
+        self._cached_scene_id = 0
         self._cached_structure_version = -1
+        self._last_root_refresh_time = 0.0
         self._cached_ordered_ids = None
         self._cached_canvas_roots = None
 
@@ -124,14 +132,25 @@ class HierarchyPanel(EditorPanel):
                 stack.extend(reversed(children))
         return result
 
-    def _get_root_objects_cached(self, scene):
+    def _get_root_objects_cached(self, scene, *, allow_stale: bool = False):
         """Return root objects, reusing a cached list when the scene structure hasn't changed."""
+        scene_id = id(scene)
         ver = scene.structure_version
-        if ver != self._cached_structure_version:
+        cached_roots = self._cached_root_objects
+        can_reuse_stale = (
+            allow_stale
+            and self._cached_scene_id == scene_id
+            and cached_roots is not None
+            and len(cached_roots) >= self._STALE_ROOT_REFRESH_ROOT_THRESHOLD
+            and (time.perf_counter() - self._last_root_refresh_time) < self._STALE_ROOT_REFRESH_INTERVAL
+        )
+        if scene_id != self._cached_scene_id or (ver != self._cached_structure_version and not can_reuse_stale):
             self._cached_root_objects = scene.get_root_objects()
             self._cached_ordered_ids = None  # invalidate ordered IDs cache
             self._cached_canvas_roots = None  # invalidate canvas roots cache
+            self._cached_scene_id = scene_id
             self._cached_structure_version = ver
+            self._last_root_refresh_time = time.perf_counter()
         return self._cached_root_objects
 
     def _get_ordered_ids_cached(self, root_objects) -> list:
@@ -225,6 +244,7 @@ class HierarchyPanel(EditorPanel):
         from .igui import IGUI
 
         obj_id = obj.id
+        _dragging = self._frame_dragging
 
         # Use string-based push_id — obj.id is uint64_t which can exceed
         # the 32-bit int limit of push_id().
@@ -245,10 +265,12 @@ class HierarchyPanel(EditorPanel):
         if self._sel.is_selected(obj_id):
             node_flags |= ImGuiTreeNodeFlags.Selected
 
-        # Check if has children - if not, use leaf flag (no arrow)
+        # Check if has children - if not, use leaf flag (no arrow).
+        # NoTreePushOnOpen avoids an unnecessary tree_pop for leaves.
         children = obj.get_children()
-        if len(children) == 0:
-            node_flags |= ImGuiTreeNodeFlags.Leaf
+        is_leaf = len(children) == 0
+        if is_leaf:
+            node_flags |= ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen
 
         # Handle auto-expansion (single id — legacy; also check multi-id set)
         if self._pending_expand_id == obj_id:
@@ -292,7 +314,8 @@ class HierarchyPanel(EditorPanel):
                 self._notify_selection_changed()
 
         # Double-click → focus editor camera on this object
-        if ctx.is_item_hovered() and ctx.is_mouse_double_clicked(0):
+        # Check is_mouse_double_clicked first (rare) to avoid per-item hovered check
+        if ctx.is_mouse_double_clicked(0) and ctx.is_item_hovered():
             if self._on_double_click_focus:
                 self._on_double_click_focus(obj)
 
@@ -357,15 +380,17 @@ class HierarchyPanel(EditorPanel):
             ctx.end_drag_drop_source()
 
         # ── Drop target on the tree node body → reparent as child ──
-        IGUI.multi_drop_target(
-            ctx,
-            [self.DRAG_DROP_TYPE, "MODEL_GUID", "MODEL_FILE", "PREFAB_GUID", "PREFAB_FILE"],
-            lambda dt, payload, _oid=obj_id: self._handle_external_drop(dt, payload, parent_id=_oid),
-        )
+        # Only during active drag to reduce per-node ImGui call overhead.
+        if _dragging:
+            IGUI.multi_drop_target(
+                ctx,
+                [self.DRAG_DROP_TYPE, "MODEL_GUID", "MODEL_FILE", "PREFAB_GUID", "PREFAB_FILE"],
+                lambda dt, payload, _oid=obj_id: self._handle_external_drop(dt, payload, parent_id=_oid),
+            )
 
-        if is_open:
+        if is_open and not is_leaf:
             # ── Separator BEFORE first child → allows drop as first child ──
-            if children:
+            if _dragging and children:
                 first_id = children[0].id
                 IGUI.reorder_separator(ctx, f"##sep_before_first_{obj_id}", self.DRAG_DROP_TYPE,
                                        lambda payload, _fid=first_id: self._move_object_adjacent(payload, _fid, after=False))
@@ -374,8 +399,9 @@ class HierarchyPanel(EditorPanel):
             ctx.tree_pop()
 
         # ── Separator drop zone AFTER this tree node ──
-        IGUI.reorder_separator(ctx, f"##sep_after_{obj_id}", self.DRAG_DROP_TYPE,
-                               lambda payload, _oid=obj_id: self._move_object_adjacent(payload, _oid, after=True))
+        if _dragging:
+            IGUI.reorder_separator(ctx, f"##sep_after_{obj_id}", self.DRAG_DROP_TYPE,
+                                   lambda payload, _oid=obj_id: self._move_object_adjacent(payload, _oid, after=True))
 
         ctx.pop_id()
     
@@ -791,6 +817,7 @@ class HierarchyPanel(EditorPanel):
                 # Mouse released — commit if not dragging
                 if not ctx.is_mouse_dragging(0):
                     pid = self._pending_select_id
+                    _scene = None
                     # In UI mode, block selection of non-canvas objects
                     if self._ui_mode:
                         from InfEngine.lib import SceneManager
@@ -805,6 +832,12 @@ class HierarchyPanel(EditorPanel):
                     if self._pending_ctrl:
                         self._sel.toggle(pid)
                     elif self._pending_shift:
+                        if _scene is None:
+                            from InfEngine.lib import SceneManager
+                            _scene = SceneManager.instance().get_active_scene()
+                        if _scene:
+                            root_objects = self._get_root_objects_cached(_scene, allow_stale=False)
+                            self._sel.set_ordered_ids(self._get_ordered_ids_cached(root_objects))
                         self._sel.range_select(pid)
                     else:
                         self._sel.select(pid)
@@ -853,7 +886,12 @@ class HierarchyPanel(EditorPanel):
             ctx.push_style_var_vec2(ImGuiStyleVar.FramePadding, *Theme.TREE_FRAME_PAD)
             ctx.push_style_var_float(ImGuiStyleVar.IndentSpacing, Theme.TREE_INDENT)
 
-            root_objects = self._get_root_objects_cached(scene)
+            allow_stale_roots = (
+                not ctx.is_window_focused(0)
+                and not ctx.is_window_hovered()
+                and self._cached_root_objects is not None
+            )
+            root_objects = self._get_root_objects_cached(scene, allow_stale=allow_stale_roots)
 
             # In UI Mode, compute canvas root set for dim/allow logic
             if self._ui_mode:
@@ -862,10 +900,11 @@ class HierarchyPanel(EditorPanel):
 
             n_roots = len(root_objects) if root_objects else 0
 
-            if n_roots > 0:
-                # Build flat ordered ID list for shift-range selection
-                self._sel.set_ordered_ids(self._get_ordered_ids_cached(root_objects))
+            # Cache drag state once per frame to skip drop-target ImGui calls
+            # when the user isn't dragging anything (~9 fewer calls per node).
+            self._frame_dragging = ctx.is_mouse_dragging(0)
 
+            if n_roots > 0:
                 avail_w = ctx.get_content_region_avail_width()
                 scroll_y = ctx.get_scroll_y()
                 viewport_h = ctx.get_content_region_avail_height()
@@ -1476,12 +1515,14 @@ class HierarchyPanel(EditorPanel):
         """Create a Canvas GameObject with UICanvas component (always as root)."""
         from InfEngine.lib import SceneManager
         from InfEngine.ui import UICanvas as UICanvasCls
+        from InfEngine.ui.ui_canvas_utils import invalidate_canvas_cache
         scene = SceneManager.instance().get_active_scene()
         if not scene:
             return
         go = scene.create_game_object("Canvas")
         if go:
             go.add_py_component(UICanvasCls())
+            invalidate_canvas_cache()
             # Canvas is always a root object — ignore parent_id
             self._sel.select(go.id)
             self._record_create(go.id, "Create Canvas")
@@ -1491,6 +1532,7 @@ class HierarchyPanel(EditorPanel):
         """Create a Text GameObject with UIText component under a Canvas."""
         from InfEngine.lib import SceneManager
         from InfEngine.ui import UIText as UITextCls, UICanvas
+        from InfEngine.ui.ui_canvas_utils import invalidate_canvas_cache
         scene = SceneManager.instance().get_active_scene()
         if not scene:
             return
@@ -1523,6 +1565,7 @@ class HierarchyPanel(EditorPanel):
                 if parent:
                     go.set_parent(parent)
                     self._pending_expand_id = canvas_parent_id
+            invalidate_canvas_cache()
             self._sel.select(go.id)
             self._record_create(go.id, "Create Text")
             self._notify_selection_changed()
@@ -1531,6 +1574,7 @@ class HierarchyPanel(EditorPanel):
         """Create a Button GameObject with UIButton component under a Canvas."""
         from InfEngine.lib import SceneManager
         from InfEngine.ui import UIButton as UIButtonCls, UICanvas
+        from InfEngine.ui.ui_canvas_utils import invalidate_canvas_cache
         scene = SceneManager.instance().get_active_scene()
         if not scene:
             return
@@ -1564,6 +1608,7 @@ class HierarchyPanel(EditorPanel):
                 if parent:
                     go.set_parent(parent)
                     self._pending_expand_id = canvas_parent_id
+            invalidate_canvas_cache()
             self._sel.select(go.id)
             self._record_create(go.id, "Create Button")
             self._notify_selection_changed()

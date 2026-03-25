@@ -203,6 +203,10 @@ class SceneFileManager:
         self._deferred_new_scene: bool = False            # True → new scene pending
         self._deferred_exit_prefab: bool = False           # True → exit prefab mode task pending
 
+        # True while _do_open_scene / _do_new_scene is running.
+        # Prevents stacking deferred loads from rapid user clicks.
+        self._load_in_progress: bool = False
+
         # Guard against repeated request_close() calls while a close
         # confirmation dialog is already visible.  Without this,
         # is_close_requested() being True every frame would re-trigger
@@ -662,6 +666,9 @@ class SceneFileManager:
         The actual load is deferred to the next frame so the scene view can
         stop rendering old 3D content first.
         """
+        if self._load_in_progress:
+            Debug.log_warning("Scene load already in progress — ignoring open_scene()")
+            return False
         if self.is_prefab_mode:
             # Auto-save prefab and schedule exit.  The deferred exit runs
             # before the deferred open in poll_deferred_load, so the
@@ -835,19 +842,27 @@ class SceneFileManager:
         until the new scene's first Execute() overwrites it, so no
         placeholder or extra-frame delay is needed.
         """
+        if self._load_in_progress:
+            return
         if self._deferred_load_path is not None:
             path = self._deferred_load_path
             self._deferred_load_path = None
+            self._load_in_progress = True
             try:
                 self._do_open_scene(path)
             except Exception as exc:
                 Debug.log_error(f"Scene load failed: {exc}")
+            finally:
+                self._load_in_progress = False
         elif self._deferred_new_scene:
             self._deferred_new_scene = False
+            self._load_in_progress = True
             try:
                 self._do_new_scene()
             except Exception as exc:
                 Debug.log_error(f"New scene failed: {exc}")
+            finally:
+                self._load_in_progress = False
 
     # ------------------------------------------------------------------
     # Display helpers
@@ -954,6 +969,14 @@ class SceneFileManager:
     # Internal — actual scene operations (no dirty check)
     # ------------------------------------------------------------------
 
+    def _pump_events_safe(self):
+        """Pump the OS message queue to prevent Windows 'Not Responding'."""
+        if self._engine:
+            try:
+                self._engine.pump_events()
+            except Exception:
+                pass
+
     def _prepare_native_scene_swap(self):
         """Clear native editor state and drain GPU work before scene replacement."""
         if not self._engine:
@@ -1012,6 +1035,10 @@ class SceneFileManager:
             Debug.log_error(f"Failed to load scene from: {path}")
             return False
 
+        # Pump OS message queue after the heavy C++ deserialization + GPU
+        # uploads so Windows doesn't flag the app as Not Responding.
+        self._pump_events_safe()
+
         self._current_scene_path = os.path.abspath(path)
         self._dirty = False
         self._reset_undo_history(scene_is_dirty=False)
@@ -1022,6 +1049,8 @@ class SceneFileManager:
             self._restore_py_components(scene)
         except Exception as exc:
             Debug.log_error(f"Error restoring Python components: {exc}")
+
+        self._pump_events_safe()
 
         self._restore_camera_state(self._current_scene_path)
         self._remember_last_scene(self._current_scene_path)
