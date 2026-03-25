@@ -524,95 +524,13 @@ GameObject *Scene::InstantiateGameObject(GameObject *source, GameObject *parent)
     if (!source)
         return nullptr;
 
-    json j = json::parse(source->Serialize());
-
-    // Unity: cloned root object gets " (Clone)" suffix
-    if (j.contains("name")) {
-        j["name"] = j["name"].get<std::string>() + " (Clone)";
-    }
-
-    // Recursive builder — same pattern as Scene::Deserialize's buildObject but
-    // deliberately omits ID restoration so every clone gets a fresh ID.
-    auto buildClone = [&](auto &&self, const json &objJson) -> std::unique_ptr<GameObject> {
-        std::string name = objJson.value("name", std::string("Clone"));
-        auto obj = std::make_unique<GameObject>(name); // fresh ID from constructor
-        obj->m_scene = this;
-
-        // Basic properties (no ID restoration — fresh IDs for clones)
-        if (objJson.contains("active"))
-            obj->m_active = objJson["active"].get<bool>();
-        if (objJson.contains("is_static"))
-            obj->m_isStatic = objJson["is_static"].get<bool>();
-        if (objJson.contains("tag"))
-            obj->m_tag = objJson["tag"].get<std::string>();
-        if (objJson.contains("layer")) {
-            int l = objJson["layer"].get<int>();
-            obj->m_layer = (l >= 0 && l < 32) ? l : 0;
-        }
-        // Prefab instance tracking — propagate to clone
-        if (objJson.contains("prefab_guid"))
-            obj->m_prefabGuid = objJson["prefab_guid"].get<std::string>();
-        obj->m_prefabRoot = objJson.value("prefab_root", false);
-
-        // Transform (strip component_id so it keeps the fresh one from constructor)
-        if (objJson.contains("transform")) {
-            json tJson = objJson["transform"];
-            tJson.erase("component_id");
-            obj->m_transform.Deserialize(tJson.dump());
-        }
-
-        // C++ components via factory (fresh component IDs / instance GUIDs)
-        if (objJson.contains("components") && objJson["components"].is_array()) {
-            for (const auto &compJson : objJson["components"]) {
-                std::string typeName = compJson.value("type", std::string());
-                if (typeName.empty() || typeName == "Transform")
-                    continue;
-
-                std::unique_ptr<Component> comp = ComponentFactory::Create(typeName);
-                if (!comp)
-                    continue;
-
-                json cJson = compJson;
-                cJson.erase("component_id");
-                cJson.erase("instance_guid");
-                comp->SetGameObject(obj.get());
-                comp->Deserialize(cJson.dump());
-                obj->m_components.push_back(std::move(comp));
-            }
-        }
-
-        // Python components -> pending for Python-side reconstruction
-        if (objJson.contains("py_components") && objJson["py_components"].is_array()) {
-            uint64_t objId = obj->GetID();
-            for (const auto &pyCompJson : objJson["py_components"]) {
-                PendingPyComponent pending;
-                pending.gameObjectId = objId;
-                pending.typeName = pyCompJson.value("py_type_name", std::string("PyComponent"));
-                pending.scriptGuid = pyCompJson.value("script_guid", std::string());
-                pending.enabled = pyCompJson.value("enabled", true);
-                if (pyCompJson.contains("py_fields")) {
-                    pending.fieldsJson = pyCompJson["py_fields"].dump();
-                }
-                m_pendingPyComponents.push_back(pending);
-            }
-        }
-
-        // Recurse children
-        if (objJson.contains("children") && objJson["children"].is_array()) {
-            for (const auto &childJson : objJson["children"]) {
-                auto child = self(self, childJson);
-                if (child) {
-                    obj->AttachChild(std::move(child));
-                }
-            }
-        }
-
-        return obj;
-    };
-
-    auto clone = buildClone(buildClone, j);
+    // Native deep clone — no JSON serialization round-trip.
+    auto clone = source->Clone(this);
     if (!clone)
         return nullptr;
+
+    // Unity: cloned root object gets " (Clone)" suffix
+    clone->SetName(source->GetName() + " (Clone)");
 
     // Register all cloned objects in scene lookup
     GameObject *ptr = clone.get();
@@ -630,23 +548,22 @@ GameObject *Scene::InstantiateGameObject(GameObject *source, GameObject *parent)
     if (parent) {
         parent->AttachChild(std::move(clone));
     } else {
-        // Unity: Instantiate with no explicit parent creates at root level
         m_rootObjects.push_back(std::move(clone));
     }
 
-    // Always awake C++ components so they register with subsystems
-    // (MeshRenderer → render registry, Collider → physics, etc.)
-    // This matches Scene::Deserialize which awakens unconditionally.
+    // Awake C++ components so they register with subsystems
     AwakeObject(ptr);
     if (m_isPlaying && m_hasStarted) {
         StartObject(ptr);
     }
 
+    ++m_structureVersion;
+
     return ptr;
 }
 
 // ============================================================================
-// Instantiate from JSON (prefab) — same clone logic but from a raw JSON string
+// Instantiate from JSON (prefab) — clone from raw JSON string (prefab file)
 // ============================================================================
 
 GameObject *Scene::InstantiateFromJson(const std::string &jsonStr, GameObject *parent)

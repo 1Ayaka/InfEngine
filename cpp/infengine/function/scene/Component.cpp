@@ -1,4 +1,5 @@
 #include "Component.h"
+#include "ComponentFactory.h"
 #include "GameObject.h"
 #include "Scene.h"
 #include "Transform.h"
@@ -268,6 +269,19 @@ bool Component::Deserialize(const std::string &jsonStr)
     } catch (const std::exception &e) {
         return false;
     }
+}
+
+std::unique_ptr<Component> Component::Clone() const
+{
+    // Base implementation — should be overridden by every concrete component.
+    // Falls back to factory + Serialize/Deserialize for unrecognized types.
+    auto clone = ComponentFactory::Create(GetTypeName());
+    if (!clone)
+        return nullptr;
+    // Copy base-class fields (clone already has fresh componentId + instanceGuid)
+    clone->m_enabled = m_enabled;
+    clone->m_executionOrder = m_executionOrder;
+    return clone;
 }
 
 } // namespace infengine

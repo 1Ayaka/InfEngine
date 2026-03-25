@@ -400,6 +400,13 @@ class GameObject
     /// @brief Deserialize GameObject from JSON string
     bool Deserialize(const std::string &jsonStr);
 
+    /// @brief Deep clone this GameObject and all children (native, no JSON).
+    /// Creates fresh IDs for all objects and components. Python components
+    /// are pushed to the Scene's pending list for Python-side reconstruction.
+    /// @param scene The scene to associate the clone with (for pending py components)
+    /// @return A new detached GameObject hierarchy (caller must attach to parent/scene)
+    [[nodiscard]] std::unique_ptr<GameObject> Clone(Scene *scene) const;
+
     /// @brief Ensure ID generator is ahead of a given ID (for deserialization)
     static void EnsureNextID(uint64_t id);
 

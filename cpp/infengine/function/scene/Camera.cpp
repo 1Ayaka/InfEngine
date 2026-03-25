@@ -240,4 +240,24 @@ std::pair<glm::vec3, glm::vec3> Camera::ScreenPointToRay(const glm::vec2 &screen
     }
 }
 
+std::unique_ptr<Component> Camera::Clone() const
+{
+    auto clone = std::make_unique<Camera>();
+    clone->m_enabled = m_enabled;
+    clone->m_executionOrder = m_executionOrder;
+    clone->m_projectionMode = m_projectionMode;
+    clone->m_fov = m_fov;
+    clone->m_aspectRatio = m_aspectRatio;
+    clone->m_orthoSize = m_orthoSize;
+    clone->m_nearClip = m_nearClip;
+    clone->m_farClip = m_farClip;
+    clone->m_depth = m_depth;
+    clone->m_cullingMask = m_cullingMask;
+    clone->m_clearFlags = m_clearFlags;
+    clone->m_backgroundColor = m_backgroundColor;
+    clone->m_screenWidth = m_screenWidth;
+    clone->m_screenHeight = m_screenHeight;
+    return clone;
+}
+
 } // namespace infengine

@@ -598,4 +598,16 @@ bool Collider::Deserialize(const std::string &jsonStr)
     }
 }
 
+void Collider::CloneBaseColliderData(Collider &target) const
+{
+    target.m_enabled = m_enabled;
+    target.m_executionOrder = m_executionOrder;
+    const auto &src = Data();
+    auto &dst = target.DataMut();
+    dst.isTrigger = src.isTrigger;
+    dst.center = src.center;
+    dst.friction = src.friction;
+    dst.bounciness = src.bounciness;
+}
+
 } // namespace infengine

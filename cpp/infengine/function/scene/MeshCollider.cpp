@@ -415,4 +415,14 @@ bool MeshCollider::Deserialize(const std::string &jsonStr)
     }
 }
 
+std::unique_ptr<Component> MeshCollider::Clone() const
+{
+    auto clone = std::make_unique<MeshCollider>();
+    CloneBaseColliderData(*clone);
+    clone->m_convex = m_convex;
+    clone->m_convexHullPositions = m_convexHullPositions;
+    clone->m_convexHullEdges = m_convexHullEdges;
+    return clone;
+}
+
 } // namespace infengine

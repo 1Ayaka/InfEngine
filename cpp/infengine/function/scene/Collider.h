@@ -172,6 +172,10 @@ class Collider : public Component
     }
 
   protected:
+    /// @brief Copy base Collider ECS properties to a clone.
+    /// Called by derived Clone() implementations.
+    void CloneBaseColliderData(Collider &target) const;
+
     /// Called after shape parameters change to update the Jolt body.
     void RebuildShape();
 

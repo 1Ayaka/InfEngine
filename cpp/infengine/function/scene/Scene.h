@@ -271,6 +271,12 @@ class Scene
         return !m_pendingPyComponents.empty();
     }
 
+    /// @brief Push a pending Python component (used by native clone to avoid JSON round-trip).
+    void AddPendingPyComponent(PendingPyComponent pc)
+    {
+        m_pendingPyComponents.push_back(std::move(pc));
+    }
+
     /// @brief Re-run Awake+OnEnable on a GameObject and its descendants.
     /// Used after undo-driven deserialization to initialise newly-created
     /// C++ components (e.g. MeshRenderer registration).

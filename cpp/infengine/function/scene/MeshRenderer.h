@@ -289,6 +289,7 @@ class MeshRenderer : public Component
 
     [[nodiscard]] std::string Serialize() const override;
     bool Deserialize(const std::string &jsonStr) override;
+    [[nodiscard]] std::unique_ptr<Component> Clone() const override;
 
   private:
     MeshRef m_mesh;

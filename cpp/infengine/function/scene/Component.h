@@ -310,6 +310,13 @@ class Component
     /// @return true if successful
     virtual bool Deserialize(const std::string &jsonStr);
 
+    /// @brief Create a deep copy of this component (native clone, no JSON round-trip).
+    /// The clone gets a fresh component ID and instance GUID.
+    /// Base implementation copies enabled state and execution order.
+    /// Override in derived classes to copy type-specific member variables.
+    /// @return A new Component (derived type), or nullptr if cloning is not supported.
+    [[nodiscard]] virtual std::unique_ptr<Component> Clone() const;
+
   protected:
     friend class GameObject;
     friend class Camera;

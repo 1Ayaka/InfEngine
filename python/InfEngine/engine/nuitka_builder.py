@@ -14,7 +14,6 @@ moved to the final destination afterwards.
 from __future__ import annotations
 
 import hashlib
-import importlib
 import os
 import shutil
 import subprocess
@@ -24,6 +23,11 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from InfEngine.debug import Debug
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 # ASCII-safe root for Nuitka staging and temporary build artifacts.
 _STAGING_ROOT = "C:\\_InfBuild"
@@ -56,15 +60,177 @@ def _has_msvc_toolchain() -> bool:
     )
 
 
-def _ensure_python_packages(*module_names: str) -> None:
+def _run_python(python_exe: str, args: List[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
+    kwargs = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": timeout,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = 0x08000000
+    return subprocess.run([python_exe, *args], **kwargs)
+
+
+def _python_version(python_exe: str) -> str:
+    try:
+        completed = _run_python(
+            python_exe,
+            ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return (completed.stdout or "").strip()
+
+
+def _is_embeddable_python_exe(python_exe: str) -> bool:
+    try:
+        root = os.path.dirname(os.path.abspath(python_exe))
+        return any(name.lower().endswith("._pth") for name in os.listdir(root))
+    except OSError:
+        return False
+
+
+def _is_valid_builder_python(python_exe: str) -> bool:
+    return bool(
+        python_exe
+        and os.path.isfile(python_exe)
+        and _python_version(python_exe) == "3.12"
+        and not _is_embeddable_python_exe(python_exe)
+    )
+
+
+def _python_from_launcher() -> Optional[str]:
+    try:
+        completed = _run_python("py", ["-3.12", "-c", "import sys; print(sys.executable)"], timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    values = (completed.stdout or "").strip().splitlines()
+    if not values:
+        return None
+    return values[-1].strip()
+
+
+def _registry_python_candidates() -> List[str]:
+    if winreg is None or sys.platform != "win32":
+        return []
+
+    candidates: list[str] = []
+    keys = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Python\PythonCore\3.12\InstallPath"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Python\PythonCore\3.12\InstallPath"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Python\PythonCore\3.12\InstallPath"),
+    ]
+    for hive, subkey in keys:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                install_path, _ = winreg.QueryValueEx(key, None)
+        except OSError:
+            continue
+        if install_path:
+            candidates.append(os.path.join(install_path, "python.exe"))
+    return candidates
+
+
+def _dedupe_paths(paths: List[str]) -> List[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if not path:
+            continue
+        normalized = os.path.normcase(os.path.abspath(path))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(path)
+    return deduped
+
+
+def _candidate_builder_pythons() -> List[str]:
+    candidates: list[str] = []
+
+    for env_name in ("INFENGINE_BUILDER_PYTHON", "INFENGINE_PYTHON312"):
+        env_value = os.environ.get(env_name)
+        if env_value:
+            candidates.append(env_value)
+
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            candidates.extend([
+                os.path.join(local_app_data, "InfEngineHub", "runtime", "venv_template", "Scripts", "python.exe"),
+                os.path.join(local_app_data, "InfEngineHub", "runtime", "python312", "python.exe"),
+            ])
+
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.extend([
+            os.path.join(exe_dir, "InfEngineHubData", "runtime", "venv_template", "Scripts", "python.exe"),
+            os.path.join(exe_dir, "InfEngineHubData", "runtime", "python312", "python.exe"),
+        ])
+
+        repo_root = Path(__file__).resolve().parents[3]
+        candidates.extend([
+            str(repo_root / "packaging" / "InfEngineHubData" / "runtime" / "venv_template" / "Scripts" / "python.exe"),
+            str(repo_root / "packaging" / "InfEngineHubData" / "runtime" / "python312" / "python.exe"),
+        ])
+
+        candidates.extend(_registry_python_candidates())
+        for root in filter(None, [os.environ.get("ProgramFiles"), os.environ.get("LocalAppData")]):
+            if root == os.environ.get("LocalAppData"):
+                candidates.append(os.path.join(root, "Programs", "Python", "Python312", "python.exe"))
+            else:
+                candidates.append(os.path.join(root, "Python312", "python.exe"))
+
+        py_python = _python_from_launcher()
+        if py_python:
+            candidates.append(py_python)
+
+    return _dedupe_paths(candidates)
+
+
+def _resolve_builder_python() -> str:
+    if _is_valid_builder_python(sys.executable):
+        return sys.executable
+
+    for candidate in _candidate_builder_pythons():
+        if _is_valid_builder_python(candidate):
+            return candidate
+
+    if _python_version(sys.executable) == "3.12" and _is_embeddable_python_exe(sys.executable):
+        raise RuntimeError(
+            "Nuitka cannot compile with the Windows embeddable Python distribution.\n"
+            "InfEngine needs a full Python 3.12 runtime or the reusable builder venv template.\n"
+            "If you are using the standalone Hub, run the Python 3.12 bootstrap first so it prepares\n"
+            "LOCALAPPDATA\\InfEngineHub\\runtime\\venv_template, then build again."
+        )
+
+    raise RuntimeError(
+        "Unable to locate a usable non-embeddable Python 3.12 interpreter for Nuitka builds.\n"
+        "Install Python 3.12 or prepare the InfEngine Hub runtime template, then try again."
+    )
+
+
+def _ensure_python_packages(python_exe: str, *module_names: str) -> None:
     missing_packages: list[str] = []
     for module_name in module_names:
-        try:
-            importlib.import_module(module_name)
-        except ImportError:
-            package_name = _AUTO_INSTALLABLE_PACKAGES.get(module_name)
-            if package_name and package_name not in missing_packages:
-                missing_packages.append(package_name)
+        completed = _run_python(
+            python_exe,
+            ["-c", f"import importlib.util; print(int(importlib.util.find_spec('{module_name}') is not None))"],
+            timeout=20,
+        )
+        if completed.returncode == 0 and (completed.stdout or "").strip() == "1":
+            continue
+        package_name = _AUTO_INSTALLABLE_PACKAGES.get(module_name)
+        if package_name and package_name not in missing_packages:
+            missing_packages.append(package_name)
 
     if not missing_packages:
         return
@@ -74,11 +240,8 @@ def _ensure_python_packages(*module_names: str) -> None:
         + ", ".join(missing_packages)
     )
     subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", *missing_packages, "--quiet"],
+        [python_exe, "-m", "pip", "install", *missing_packages, "--quiet"],
     )
-
-    for module_name in module_names:
-        importlib.import_module(module_name)
 
 
 class NuitkaBuilder:
@@ -110,6 +273,7 @@ class NuitkaBuilder:
         # Staging directory — unique per build to allow parallel builds
         tag = hashlib.md5(self.output_dir.encode()).hexdigest()[:8]
         self._staging_dir = os.path.join(_STAGING_ROOT, tag)
+        self._builder_python = _resolve_builder_python()
 
     # ------------------------------------------------------------------
     # Public API
@@ -162,16 +326,16 @@ class NuitkaBuilder:
     # Nuitka availability check
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _check_nuitka():
+    def _check_nuitka(self):
         """Ensure Nuitka is installed; auto-install if missing."""
         try:
-            _ensure_python_packages("nuitka", "ordered_set")
-        except ImportError:
+            _ensure_python_packages(self._builder_python, "nuitka", "ordered_set")
+        except Exception as exc:
             raise RuntimeError(
                 "Failed to auto-install Nuitka.  "
+                f"Builder Python: {self._builder_python}\n"
                 "Please run manually:\n    pip install nuitka ordered-set"
-            )
+            ) from exc
 
     # ------------------------------------------------------------------
     # Staging directory
@@ -202,7 +366,7 @@ class NuitkaBuilder:
         All output paths point to the ASCII-safe staging directory.
         """
         cmd = [
-            sys.executable, "-m", "nuitka",
+            self._builder_python, "-m", "nuitka",
             "--standalone",
             "--assume-yes-for-downloads",
             f"--windows-console-mode={self.console_mode}",
@@ -311,6 +475,20 @@ class NuitkaBuilder:
         # code across builds — this is the single biggest speed win.
         os.makedirs(_NUITKA_CACHE_DIR, exist_ok=True)
         env["NUITKA_CACHE_DIR"] = _NUITKA_CACHE_DIR
+
+        # If we switch away from the current interpreter to a reusable build
+        # venv, preserve the current import roots so Nuitka can still resolve
+        # the live InfEngine package and project-installed dependencies.
+        pythonpath_entries: list[str] = []
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        if existing_pythonpath:
+            pythonpath_entries.extend([p for p in existing_pythonpath.split(os.pathsep) if p])
+        pythonpath_entries.extend(
+            path for path in sys.path
+            if path and os.path.isdir(path)
+        )
+        if pythonpath_entries:
+            env["PYTHONPATH"] = os.pathsep.join(_dedupe_paths(pythonpath_entries))
 
         proc = subprocess.Popen(
             cmd,

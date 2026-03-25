@@ -97,4 +97,12 @@ bool BoxCollider::Deserialize(const std::string &jsonStr)
     }
 }
 
+std::unique_ptr<Component> BoxCollider::Clone() const
+{
+    auto clone = std::make_unique<BoxCollider>();
+    CloneBaseColliderData(*clone);
+    clone->m_size = m_size;
+    return clone;
+}
+
 } // namespace infengine

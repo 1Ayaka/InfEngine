@@ -724,4 +724,34 @@ bool MeshRenderer::Deserialize(const std::string &jsonStr)
     }
 }
 
+std::unique_ptr<Component> MeshRenderer::Clone() const
+{
+    auto clone = std::make_unique<MeshRenderer>();
+    // Base fields
+    clone->m_enabled = m_enabled;
+    clone->m_executionOrder = m_executionOrder;
+    // Mesh ref
+    clone->m_mesh = m_mesh;
+    clone->m_meshAsset = m_meshAsset;
+    clone->m_meshBufferDirty = false;
+    // Inline mesh
+    clone->m_useInlineMesh = m_useInlineMesh;
+    clone->m_inlineMeshName = m_inlineMeshName;
+    clone->m_inlineVertices = m_inlineVertices;
+    clone->m_inlineIndices = m_inlineIndices;
+    // Materials
+    clone->m_materials = m_materials;
+    // Rendering flags
+    clone->m_castShadows = m_castShadows;
+    clone->m_receiveShadows = m_receiveShadows;
+    // Submesh / node group
+    clone->m_submeshIndex = m_submeshIndex;
+    clone->m_nodeGroup = m_nodeGroup;
+    clone->m_meshPivotOffset = m_meshPivotOffset;
+    // Bounds
+    clone->m_localBoundsMin = m_localBoundsMin;
+    clone->m_localBoundsMax = m_localBoundsMax;
+    return clone;
+}
+
 } // namespace infengine

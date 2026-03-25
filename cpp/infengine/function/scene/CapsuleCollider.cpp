@@ -159,4 +159,14 @@ bool CapsuleCollider::Deserialize(const std::string &jsonStr)
     }
 }
 
+std::unique_ptr<Component> CapsuleCollider::Clone() const
+{
+    auto clone = std::make_unique<CapsuleCollider>();
+    CloneBaseColliderData(*clone);
+    clone->m_radius = m_radius;
+    clone->m_height = m_height;
+    clone->m_direction = m_direction;
+    return clone;
+}
+
 } // namespace infengine

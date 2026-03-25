@@ -95,4 +95,12 @@ bool SphereCollider::Deserialize(const std::string &jsonStr)
     }
 }
 
+std::unique_ptr<Component> SphereCollider::Clone() const
+{
+    auto clone = std::make_unique<SphereCollider>();
+    CloneBaseColliderData(*clone);
+    clone->m_radius = m_radius;
+    return clone;
+}
+
 } // namespace infengine

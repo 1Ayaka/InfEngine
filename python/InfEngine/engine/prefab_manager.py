@@ -14,6 +14,118 @@ from InfEngine.debug import Debug
 
 PREFAB_EXTENSION = ".prefab"
 PREFAB_VERSION = 1
+_PREFAB_TEMPLATE_SCENE_NAME = "__InfEnginePrefabTemplateCache__"
+_PREFAB_TEMPLATE_CACHE = {}
+
+
+def _invalidate_prefab_template_cache(file_path: str = None, guid: str = ""):
+    keys_to_remove = set()
+    if guid:
+        keys_to_remove.add(guid)
+    if file_path:
+        keys_to_remove.add(os.path.normcase(os.path.abspath(file_path)))
+    for key in keys_to_remove:
+        _PREFAB_TEMPLATE_CACHE.pop(key, None)
+
+
+def _get_prefab_template_scene():
+    from InfEngine.lib import SceneManager
+
+    manager = SceneManager.instance()
+    scene = manager.get_scene(_PREFAB_TEMPLATE_SCENE_NAME)
+    if scene is None:
+        scene = manager.create_scene(_PREFAB_TEMPLATE_SCENE_NAME)
+        scene.set_playing(False)
+    return scene
+
+
+def _get_file_stamp(file_path: str):
+    try:
+        stat = os.stat(file_path)
+        return (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
+
+
+def _load_prefab_template_payload(file_path: str, resolved_guid: str):
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            prefab_data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        Debug.log_error(f"Failed to read prefab file: {exc}")
+        return None
+
+    root_obj_data = prefab_data.get("root_object")
+    if root_obj_data is None:
+        Debug.log_error("Invalid prefab file: missing 'root_object'.")
+        return None
+
+    file_version = prefab_data.get("prefab_version", 0)
+    if file_version > PREFAB_VERSION:
+        Debug.log_error(
+            f"Prefab '{file_path}' uses version {file_version} but this "
+            f"engine only supports up to version {PREFAB_VERSION}. "
+            f"Please update InfEngine."
+        )
+        return None
+    if file_version < 1:
+        Debug.log_warning(
+            f"Prefab '{file_path}' has no version tag - treating as v1."
+        )
+
+    root_obj_data = copy.deepcopy(root_obj_data)
+    _strip_prefab_runtime_fields(root_obj_data)
+    if resolved_guid:
+        _stamp_prefab_guid(root_obj_data, resolved_guid)
+
+    return root_obj_data
+
+
+def _get_cached_prefab_template(file_path: str, resolved_guid: str, asset_database=None):
+    stamp = _get_file_stamp(file_path)
+    if stamp is None:
+        Debug.log_warning(f"Prefab file not found: {file_path}")
+        return None
+
+    cache_key = resolved_guid or os.path.normcase(os.path.abspath(file_path))
+    cached = _PREFAB_TEMPLATE_CACHE.get(cache_key)
+    if cached and cached.get("stamp") == stamp:
+        template = cached.get("template")
+        if template is not None:
+            return template
+
+    template_payload = _load_prefab_template_payload(file_path, resolved_guid)
+    if template_payload is None:
+        return None
+
+    template_scene = _get_prefab_template_scene()
+
+    old_template = cached.get("template") if cached else None
+    if old_template is not None:
+        try:
+            template_scene.destroy_game_object(old_template)
+            template_scene.process_pending_destroys()
+        except Exception:
+            pass
+
+    template = template_scene.instantiate_from_json(json.dumps(template_payload), None)
+    if template is None:
+        Debug.log_error("Failed to build cached prefab template from JSON.")
+        return None
+
+    try:
+        _restore_pending_py_components(template_scene, asset_database)
+    except Exception as exc:
+        Debug.log_error(f"Failed to restore cached prefab Python components: {exc}")
+        template_scene.destroy_game_object(template)
+        template_scene.process_pending_destroys()
+        return None
+
+    _PREFAB_TEMPLATE_CACHE[cache_key] = {
+        "stamp": stamp,
+        "template": template,
+    }
+    return template
 
 
 def _strip_prefab_runtime_fields(obj_data: dict):
@@ -78,8 +190,12 @@ def save_prefab(game_object, file_path: str, asset_database=None) -> bool:
         try:
             guid = asset_database.import_asset(file_path)
             Debug.log_internal(f"Registered prefab: {os.path.basename(file_path)} -> {guid}")
+            _invalidate_prefab_template_cache(file_path, guid)
         except Exception as exc:
             Debug.log_warning(f"Failed to register prefab in AssetDatabase: {exc}")
+            _invalidate_prefab_template_cache(file_path, "")
+    else:
+        _invalidate_prefab_template_cache(file_path, "")
 
     Debug.log_internal(f"Prefab saved: {file_path}")
     return True
@@ -115,47 +231,17 @@ def instantiate_prefab(file_path: str = None, guid: str = None,
         Debug.log_warning("No active scene — cannot instantiate prefab.")
         return None
 
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            prefab_data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        Debug.log_error(f"Failed to read prefab file: {exc}")
+    template = _get_cached_prefab_template(file_path, resolved_guid, asset_database)
+    if template is None:
         return None
 
-    root_obj_data = prefab_data.get("root_object")
-    if root_obj_data is None:
-        Debug.log_error("Invalid prefab file: missing 'root_object'.")
-        return None
-
-    # Validate prefab version — reject files from incompatible future versions
-    file_version = prefab_data.get("prefab_version", 0)
-    if file_version > PREFAB_VERSION:
-        Debug.log_error(
-            f"Prefab '{file_path}' uses version {file_version} but this "
-            f"engine only supports up to version {PREFAB_VERSION}. "
-            f"Please update InfEngine."
-        )
-        return None
-    if file_version < 1:
-        Debug.log_warning(
-            f"Prefab '{file_path}' has no version tag — treating as v1."
-        )
-
-    root_obj_data = copy.deepcopy(root_obj_data)
-    _strip_prefab_runtime_fields(root_obj_data)
-
-    # Stamp prefab linkage into the JSON before instantiation
-    if resolved_guid:
-        _stamp_prefab_guid(root_obj_data, resolved_guid)
-
-    # Use C++ InstantiateFromJson — creates fresh IDs and collects pending py_components
-    go_json_str = json.dumps(root_obj_data)
-    new_obj = scene.instantiate_from_json(go_json_str, parent)
+    # Repeated prefab instantiation now uses native C++ clone from a cached template.
+    new_obj = scene.instantiate_game_object(template, parent)
     if new_obj is None:
-        Debug.log_error("Failed to instantiate prefab from JSON.")
+        Debug.log_error("Failed to instantiate prefab from cached template.")
         return None
 
-    # Restore Python components that were collected as pending
+    # Restore Python components that were collected as pending during native clone.
     try:
         _restore_pending_py_components(scene, asset_database)
     except Exception as exc:

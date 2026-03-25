@@ -443,4 +443,29 @@ void PyComponentProxy::SetScriptGuid(const std::string &guid)
     }
 }
 
+std::unique_ptr<Component> PyComponentProxy::Clone() const
+{
+    // Python components cannot be natively cloned in C++.
+    // The caller (GameObject::Clone) handles PyComponentProxy by pushing
+    // pending info directly into the Scene.
+    return nullptr;
+}
+
+std::string PyComponentProxy::SerializePyFields() const
+{
+    if (m_pyComponent.is_none())
+        return {};
+    try {
+        if (py::hasattr(m_pyComponent, "_serialize_fields")) {
+            py::object fieldsJson = m_pyComponent.attr("_serialize_fields")();
+            if (!fieldsJson.is_none()) {
+                return fieldsJson.cast<std::string>();
+            }
+        }
+    } catch (const py::error_already_set &e) {
+        INFLOG_ERROR("[PyComponentProxy] Error serializing fields for clone: ", e.what());
+    }
+    return {};
+}
+
 } // namespace infengine

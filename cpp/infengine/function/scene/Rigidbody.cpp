@@ -1011,4 +1011,25 @@ bool Rigidbody::Deserialize(const std::string &jsonStr)
     }
 }
 
+std::unique_ptr<Component> Rigidbody::Clone() const
+{
+    auto clone = std::make_unique<Rigidbody>();
+    clone->m_enabled = m_enabled;
+    clone->m_executionOrder = m_executionOrder;
+    const auto &src = Data();
+    auto &dst = clone->DataMut();
+    dst.mass = src.mass;
+    dst.drag = src.drag;
+    dst.angularDrag = src.angularDrag;
+    dst.useGravity = src.useGravity;
+    dst.isKinematic = src.isKinematic;
+    dst.constraints = src.constraints;
+    dst.collisionDetectionMode = src.collisionDetectionMode;
+    dst.interpolation = src.interpolation;
+    dst.maxAngularVelocity = src.maxAngularVelocity;
+    dst.maxLinearVelocity = src.maxLinearVelocity;
+    dst.maxDepenetrationVelocity = src.maxDepenetrationVelocity;
+    return clone;
+}
+
 } // namespace infengine

@@ -195,4 +195,25 @@ glm::mat4 Light::GetLightProjectionMatrix(float shadowExtent, float nearPlane, f
     }
 }
 
+std::unique_ptr<Component> Light::Clone() const
+{
+    auto clone = std::make_unique<Light>();
+    clone->m_enabled = m_enabled;
+    clone->m_executionOrder = m_executionOrder;
+    clone->m_lightType = m_lightType;
+    clone->m_color = m_color;
+    clone->m_intensity = m_intensity;
+    clone->m_range = m_range;
+    clone->m_spotAngle = m_spotAngle;
+    clone->m_outerSpotAngle = m_outerSpotAngle;
+    clone->m_shadows = m_shadows;
+    clone->m_shadowStrength = m_shadowStrength;
+    clone->m_shadowBias = m_shadowBias;
+    clone->m_shadowNormalBias = m_shadowNormalBias;
+    clone->m_renderMode = m_renderMode;
+    clone->m_cullingMask = m_cullingMask;
+    clone->m_baked = m_baked;
+    return clone;
+}
+
 } // namespace infengine

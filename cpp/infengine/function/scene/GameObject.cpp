@@ -755,4 +755,52 @@ void GameObject::CollectAllDescendants(std::vector<GameObject *> &out) const
     }
 }
 
+std::unique_ptr<GameObject> GameObject::Clone(Scene *scene) const
+{
+    auto obj = std::make_unique<GameObject>(m_name); // fresh ID
+    obj->m_scene = scene;
+    obj->m_active = m_active;
+    obj->m_isStatic = m_isStatic;
+    obj->m_tag = m_tag;
+    obj->m_layer = m_layer;
+    obj->m_prefabGuid = m_prefabGuid;
+    obj->m_prefabRoot = m_prefabRoot;
+
+    // Clone transform data (ECS store copy, no JSON)
+    m_transform.CloneDataTo(obj->m_transform);
+
+    // Clone components
+    for (const auto &comp : m_components) {
+        const PyComponentProxy *proxy = dynamic_cast<const PyComponentProxy *>(comp.get());
+        if (proxy) {
+            // Python components → push to Scene pending list (C++ can't clone py::object)
+            if (scene) {
+                Scene::PendingPyComponent pending;
+                pending.gameObjectId = obj->GetID();
+                pending.typeName = proxy->GetPyTypeName();
+                pending.scriptGuid = proxy->GetScriptGuid();
+                pending.enabled = proxy->IsEnabled();
+                pending.fieldsJson = proxy->SerializePyFields();
+                scene->AddPendingPyComponent(std::move(pending));
+            }
+        } else {
+            auto clonedComp = comp->Clone();
+            if (clonedComp) {
+                clonedComp->SetGameObject(obj.get());
+                obj->m_components.push_back(std::move(clonedComp));
+            }
+        }
+    }
+
+    // Recursively clone children
+    for (const auto &child : m_children) {
+        auto clonedChild = child->Clone(scene);
+        if (clonedChild) {
+            obj->AttachChild(std::move(clonedChild));
+        }
+    }
+
+    return obj;
+}
+
 } // namespace infengine

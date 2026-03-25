@@ -432,6 +432,13 @@ class Transform : public Component
     [[nodiscard]] std::string Serialize() const override;
     bool Deserialize(const std::string &jsonStr) override;
 
+    /// @brief Native clone: copy all ECS transform data to target (no JSON).
+    /// The target keeps its own component ID and instance GUID.
+    void CloneDataTo(Transform &target) const;
+
+    /// @brief Native clone override — not used for Transform (embedded in GO).
+    [[nodiscard]] std::unique_ptr<Component> Clone() const override;
+
   private:
     // ========================================================================
     // Unity-aligned YXZ intrinsic Euler convention

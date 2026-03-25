@@ -553,4 +553,29 @@ bool Transform::Deserialize(const std::string &jsonStr)
     }
 }
 
+void Transform::CloneDataTo(Transform &target) const
+{
+    auto &store = TransformECSStore::Instance();
+    const auto &src = store.Get(m_ecsHandle);
+    auto &dst = store.Get(target.m_ecsHandle);
+
+    dst.localPosition = src.localPosition;
+    dst.localEulerAngles = src.localEulerAngles;
+    dst.localRotation = src.localRotation;
+    dst.localScale = src.localScale;
+    dst.dirty = true;
+    dst.hasCachedWorldEulerAngles = false;
+    dst.worldEulerExact = false;
+    dst.worldMatrixDirty = true;
+
+    target.SetEnabled(IsEnabled());
+}
+
+std::unique_ptr<Component> Transform::Clone() const
+{
+    // Transform is embedded in GameObject; this should not be called directly.
+    // Return nullptr — GameObject::Clone handles transform cloning via CloneDataTo.
+    return nullptr;
+}
+
 } // namespace infengine
