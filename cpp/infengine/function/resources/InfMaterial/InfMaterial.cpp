@@ -653,7 +653,9 @@ bool InfMaterial::Deserialize(const std::string &jsonStr)
         if (j.contains("shaders")) {
             auto &shaders = j["shaders"];
             if (shaders.contains("name")) {
-                // Legacy format: single "name" for both vert and frag.
+                // Legacy v1 format: single "name" for both vert and frag.
+                // Modern format (v3+) uses separate "vertex" / "fragment" keys.
+                // TODO(post-release): drop once all .mat assets are re-saved.
                 std::string n = shaders["name"].get<std::string>();
                 m_vertShaderName = n;
                 m_fragShaderName = n;
@@ -727,9 +729,10 @@ bool InfMaterial::Deserialize(const std::string &jsonStr)
             if (rs.contains("stencilBack"))
                 m_renderState.stencilBack = jsonToStencilOp(rs["stencilBack"]);
 
-            // Coordinate-system migration: materials saved before v3 used the
-            // old front-face convention. Flip the stored value once on load so
-            // existing assets keep the same visible culling behaviour.
+            // Coordinate-system migration (v1/v2 → v3): materials saved before
+            // v3 used the old front-face convention.  Flip the stored value once
+            // on load so existing assets keep the same visible culling behaviour.
+            // TODO(post-release): drop once all .mat assets are re-saved as v3.
             if (materialVersion < 3 && rs.contains("frontFace")) {
                 if (m_renderState.frontFace == VK_FRONT_FACE_CLOCKWISE) {
                     m_renderState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;

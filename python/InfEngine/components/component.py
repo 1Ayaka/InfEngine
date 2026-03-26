@@ -1024,7 +1024,12 @@ class InfComponent:
         current_version = getattr(self, "__schema_version__", 1)
 
         if schema_version is not None and schema_version != current_version:
-            # Attempt migration if the class defines __migrate__
+            # Python-side schema migration for user scripts.
+            # NOTE: C++ components have a *separate* schema_version tracked
+            # in Component::Serialize/Deserialize (Component.cpp).  That
+            # version covers the base wire format; this Python version
+            # covers per-script field layout changes.  The two systems
+            # are independent — keep both in mind when adding new base fields.
             migrate = getattr(self.__class__, '__migrate__', None)
             if migrate is not None:
                 try:

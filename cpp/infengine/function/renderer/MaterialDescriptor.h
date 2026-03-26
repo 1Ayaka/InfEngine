@@ -117,6 +117,7 @@ struct MaterialDescriptorSet
     VkDescriptorSetLayout layout = VK_NULL_HANDLE; // Track which layout was used to create this set
     VkDescriptorPool ownerPool = VK_NULL_HANDLE;   // Pool this set was allocated from
     std::unique_ptr<MaterialUBO> materialUBO;
+    std::unique_ptr<MaterialUBO> vertexMaterialUBO; // Vertex-stage material UBO (binding 14)
 
     // Texture bindings (binding -> imageView, sampler)
     struct TextureBinding

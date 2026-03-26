@@ -50,7 +50,7 @@ class UIButton(UISelectable):
     )
     label_color: list = serialized_field(
         default=[1.0, 1.0, 1.0, 1.0], field_type=FieldType.COLOR,
-        tooltip="Label text colour", group="Content",
+        hdr=True, tooltip="Label text colour", group="Content",
     )
     text_align_h: TextAlignH = serialized_field(
         default=TextAlignH.Center,
@@ -78,7 +78,7 @@ class UIButton(UISelectable):
     )
     background_color: list = serialized_field(
         default=[0.22, 0.56, 0.92, 1.0], field_type=FieldType.COLOR,
-        tooltip="Background fill colour (RGBA)", group="Fill",
+        hdr=True, tooltip="Background fill colour (RGBA)", group="Fill",
     )
 
     # ── Events ──

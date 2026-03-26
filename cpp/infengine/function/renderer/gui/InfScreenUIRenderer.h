@@ -180,6 +180,24 @@ class InfScreenUIRenderer
     ImDrawList *GetDrawList(ScreenUIList list);
     const ImDrawList *GetDrawList(ScreenUIList list) const;
 
+    struct GPUVertex
+    {
+        ImVec2 pos;
+        ImVec2 uv;
+        float color[4];
+    };
+
+    struct HDRColorRange
+    {
+        int vertexStart = 0;
+        int vertexEnd = 0;
+        float rgbScale = 1.0f;
+    };
+
+    void TrackHDRColorRange(ScreenUIList list, int vertexStart, int vertexEnd, float rgbScale);
+    std::vector<HDRColorRange> &GetHDRRanges(ScreenUIList list);
+    const std::vector<HDRColorRange> &GetHDRRanges(ScreenUIList list) const;
+
     // Device
     VkDevice m_device = VK_NULL_HANDLE;
     VmaAllocator m_allocator = VK_NULL_HANDLE;
@@ -213,6 +231,8 @@ class InfScreenUIRenderer
     // ImDrawList instances (standalone, not attached to any ImGui window)
     ImDrawList *m_cameraDrawList = nullptr;
     ImDrawList *m_overlayDrawList = nullptr;
+    std::vector<HDRColorRange> m_cameraHDRRanges;
+    std::vector<HDRColorRange> m_overlayHDRRanges;
 
     // Frame dimensions
     uint32_t m_frameWidth = 0;

@@ -293,7 +293,16 @@ def _load_material(path: str):
         cached = json.loads(native.serialize())
     except (RuntimeError, ValueError, json.JSONDecodeError):
         cached = {"name": mat.name, "properties": {}}
+    old_prop_names = set(cached.get("properties", {}).keys())
     _sync_material_shader_metadata(cached)
+    new_prop_names = set(cached.get("properties", {}).keys())
+    if new_prop_names != old_prop_names:
+        # Vertex/fragment shader sync added new properties — push them to the
+        # native C++ material so the UBO picks up the correct default values.
+        try:
+            native.deserialize(json.dumps(cached))
+        except (RuntimeError, ValueError):
+            pass
     return mat, {
         "native_mat": native,
         "cached_data": cached,
@@ -494,17 +503,26 @@ def _merge_material_cached_data(existing: Optional[dict], fresh: dict) -> dict:
                     merged_prop[key] = value
         merged_props[name] = merged_prop
 
+    # Preserve shader-declared properties that exist in cached data but not yet
+    # in the native serialisation (e.g. vertex shader properties just synced).
+    shader_order = existing.get("_shader_property_order", [])
+    shader_declared = set(shader_order) if shader_order else set()
+    for name in shader_declared:
+        if name not in merged_props and name in existing_props:
+            merged_props[name] = existing_props[name]
+
     merged["properties"] = merged_props
     return merged
 
 
 def _sync_material_shader_metadata(mat_data: dict):
     shaders = mat_data.get("shaders") if isinstance(mat_data.get("shaders"), dict) else {}
+    vert_shader_id = shaders.get("vertex", "")
     frag_shader_id = shaders.get("fragment", "")
-    if frag_shader_id:
+    if vert_shader_id or frag_shader_id:
         from . import inspector_shader_utils as shader_utils
 
-        shader_utils.sync_properties_from_shader(mat_data, frag_shader_id, ".frag", remove_unknown=True)
+        shader_utils.sync_all_shader_properties(mat_data, vert_shader_id, frag_shader_id, remove_unknown=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

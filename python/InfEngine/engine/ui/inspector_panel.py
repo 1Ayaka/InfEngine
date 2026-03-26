@@ -887,6 +887,14 @@ class InspectorPanel(EditorPanel):
                         for mk, mv in old_props[pname].items():
                             if mk not in ("value", "guid"):
                                 fprop[mk] = mv
+                # Preserve shader-declared properties not yet in the native
+                # serialisation (e.g. vertex shader properties just synced).
+                shader_order = old_data.get("_shader_property_order", [])
+                shader_declared = set(shader_order) if shader_order else set()
+                for pname in shader_declared:
+                    if pname not in new_props and pname in old_props:
+                        new_props[pname] = old_props[pname]
+                fresh["properties"] = new_props
             self.__inline_mat_data = fresh
             if mat_id != self.__inline_mat_id:
                 self.__inline_shader_cache = {".vert": None, ".frag": None}
@@ -930,21 +938,31 @@ class InspectorPanel(EditorPanel):
             _mat_snapshot, _mat_restore, "Edit Material",
         )
 
-        # Sync shader annotations
+        # Sync shader annotations (both vertex + fragment properties)
+        vert_shader_id = mat_data.get("shaders", {}).get("vertex", "")
         frag_shader_id = mat_data.get("shaders", {}).get("fragment", "")
-        if frag_shader_id and not mat_data.get("_shader_property_order"):
+        expected_shader_props = shader_utils.get_all_shader_property_names(vert_shader_id, frag_shader_id)
+        current_props = mat_data.get("properties", {})
+        missing_shader_props = any(name not in current_props for name in expected_shader_props)
+
+        if (vert_shader_id or frag_shader_id) and (not mat_data.get("_shader_property_order") or missing_shader_props):
             self._inline_mat_sync_key = ""
         prop_gen = shader_utils.get_shader_property_generation()
-        inline_sync_key = f"{frag_shader_id}:{prop_gen}"
+        inline_sync_key = f"{vert_shader_id}|{frag_shader_id}:{prop_gen}"
         if inline_sync_key != getattr(self, '_inline_mat_sync_key', ''):
-            old_id = getattr(self, '_inline_mat_sync_key', '').rsplit(":", 1)[0] if getattr(self, '_inline_mat_sync_key', '') else ''
-            remove = (frag_shader_id == old_id) and bool(old_id)
+            old_key = getattr(self, '_inline_mat_sync_key', '').rsplit(":", 1)[0] if getattr(self, '_inline_mat_sync_key', '') else ''
+            remove = (f"{vert_shader_id}|{frag_shader_id}" == old_key) and bool(old_key)
             self._inline_mat_sync_key = inline_sync_key
             self.__inline_mat_frag_shader_id = frag_shader_id
-            if frag_shader_id:
-                shader_utils.sync_properties_from_shader(
-                    mat_data, frag_shader_id, ".frag", remove_unknown=remove,
+            if vert_shader_id or frag_shader_id:
+                old_prop_names = set(mat_data.get("properties", {}).keys())
+                shader_utils.sync_all_shader_properties(
+                    mat_data, vert_shader_id, frag_shader_id, remove_unknown=remove,
                 )
+                new_prop_names = set(mat_data.get("properties", {}).keys())
+                if new_prop_names != old_prop_names:
+                    changed = True
+                    requires_deserialize = True
 
         ctx.separator()
 
@@ -969,6 +987,11 @@ class InspectorPanel(EditorPanel):
                 changed = True
                 requires_deserialize = True
                 requires_pipeline_refresh = True
+                frag_id = shaders.get("fragment", "")
+                shader_utils.sync_all_shader_properties(
+                    mat_data, picked, frag_id, remove_unknown=True,
+                )
+                self._inline_mat_sync_key = f"{picked}|{frag_id}:{shader_utils.get_shader_property_generation()}"
 
             if self._render_object_field(
                 ctx, "imat_vert", vert_display, "Vert",
@@ -986,6 +1009,11 @@ class InspectorPanel(EditorPanel):
                         changed = True
                         requires_deserialize = True
                         requires_pipeline_refresh = True
+                        frag_id = shaders.get("fragment", "")
+                        shader_utils.sync_all_shader_properties(
+                            mat_data, value, frag_id, remove_unknown=True,
+                        )
+                        self._inline_mat_sync_key = f"{value}|{frag_id}:{shader_utils.get_shader_property_generation()}"
                 ctx.end_popup()
 
             # Fragment
@@ -1001,11 +1029,12 @@ class InspectorPanel(EditorPanel):
                 requires_deserialize = True
                 requires_pipeline_refresh = True
                 if picked != old_frag:
-                    shader_utils.sync_properties_from_shader(
-                        mat_data, picked, ".frag", remove_unknown=True,
+                    vert_id = shaders.get("vertex", "")
+                    shader_utils.sync_all_shader_properties(
+                        mat_data, vert_id, picked, remove_unknown=True,
                     )
                     self.__inline_mat_frag_shader_id = picked
-                    self._inline_mat_sync_key = f"{picked}:{shader_utils.get_shader_property_generation()}"
+                    self._inline_mat_sync_key = f"{vert_id}|{picked}:{shader_utils.get_shader_property_generation()}"
 
             if self._render_object_field(
                 ctx, "imat_frag", frag_display, "Frag",
@@ -1025,11 +1054,12 @@ class InspectorPanel(EditorPanel):
                         requires_deserialize = True
                         requires_pipeline_refresh = True
                         if value != old_frag:
-                            shader_utils.sync_properties_from_shader(
-                                mat_data, value, ".frag", remove_unknown=True,
+                            vert_id = shaders.get("vertex", "")
+                            shader_utils.sync_all_shader_properties(
+                                mat_data, vert_id, value, remove_unknown=True,
                             )
                             self.__inline_mat_frag_shader_id = value
-                            self._inline_mat_sync_key = f"{value}:{shader_utils.get_shader_property_generation()}"
+                            self._inline_mat_sync_key = f"{vert_id}|{value}:{shader_utils.get_shader_property_generation()}"
                 ctx.end_popup()
         if is_builtin:
             ctx.end_disabled()
@@ -1241,12 +1271,14 @@ class InspectorPanel(EditorPanel):
             key = "vertex" if required_ext == ".vert" else "fragment"
             old = shaders_dict.get(key, "")
             shaders_dict[key] = path
-            if key == "fragment" and path != old and self.__inline_mat_data:
-                shader_utils.sync_properties_from_shader(
-                    self.__inline_mat_data, path, ".frag", remove_unknown=True,
+            if path != old and self.__inline_mat_data:
+                vert_id = shaders_dict.get("vertex", "")
+                frag_id = shaders_dict.get("fragment", "")
+                shader_utils.sync_all_shader_properties(
+                    self.__inline_mat_data, vert_id, frag_id, remove_unknown=True,
                 )
-                self.__inline_mat_frag_shader_id = path
-                self._inline_mat_sync_key = f"{path}:{shader_utils.get_shader_property_generation()}"
+                self.__inline_mat_frag_shader_id = frag_id
+                self._inline_mat_sync_key = f"{vert_id}|{frag_id}:{shader_utils.get_shader_property_generation()}"
 
     @staticmethod
     def _apply_inline_native_prop(native_mat, prop_name: str, value, ptype: int):

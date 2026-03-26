@@ -28,6 +28,24 @@ struct ImportContext
 /**
  * @brief Abstract base for asset importers.
  *
+ * ── Architecture Note ──────────────────────────────────────────────
+ * The asset pipeline has two distinct layers:
+ *
+ *   AssetImporter  (this class, in AssetImporter/)
+ *     Responsible for the *import strategy*: how a raw source file
+ *     (.png, .fbx, .glsl …) is processed, what metadata is generated,
+ *     and what import settings are stored in the .meta sidecar.
+ *     AssetDatabase drives importers during first-import and reimport.
+ *
+ *   IAssetLoader  (in AssetRegistry/IAssetLoader.h)
+ *     Responsible for *runtime loading*: turning an already-imported
+ *     asset into an in-memory object (InfMesh, InfTexture, …).
+ *     AssetRegistry delegates Load / Reload / ScanDependencies here.
+ *
+ * Legacy helpers in InfFileLoader/ (InfDefaultTextLoader, etc.) also
+ * implement IAssetLoader for generic text/binary files and scripts.
+ * ──────────────────────────────────────────────────────────────────
+ *
  * Each concrete importer handles one category of resource
  * (textures, shaders, materials, …).  The ImporterRegistry
  * maps file extensions to their importer, and AssetDatabase

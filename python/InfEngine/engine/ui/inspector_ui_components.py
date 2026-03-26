@@ -620,7 +620,7 @@ def _render_text_fill(ctx, text_comp: UIText):
         current = list(current) + [1.0]
 
     field_label(ctx, t("ui_comp.color"), section_lw)
-    nr, ng, nb, na = _render_color_bar(ctx, "##ui_text_fill_color", current[0], current[1], current[2], current[3])
+    nr, ng, nb, na = _render_color_bar(ctx, "##ui_text_fill_color", current[0], current[1], current[2], current[3], allow_hdr=True)
     new_color = [nr, ng, nb, na]
     if tuple(new_color) != tuple(current[:4]):
         _apply_if_changed(text_comp, "color", current[:4], new_color)
@@ -713,7 +713,7 @@ def _render_image_fill(ctx, img_comp: UIImage):
     while len(current) < 4:
         current = list(current) + [1.0]
     field_label(ctx, t("ui_comp.color"), section_lw)
-    nr, ng, nb, na = _render_color_bar(ctx, "##ui_image_fill_color", current[0], current[1], current[2], current[3])
+    nr, ng, nb, na = _render_color_bar(ctx, "##ui_image_fill_color", current[0], current[1], current[2], current[3], allow_hdr=True)
     new_color = [nr, ng, nb, na]
     if tuple(new_color) != tuple(current[:4]):
         _apply_if_changed(img_comp, "color", current[:4], new_color)
@@ -780,7 +780,7 @@ def _render_button_inspector(ctx, btn_comp: UIButton):
         cur_lc = list(btn_comp.label_color or [1, 1, 1, 1])
         while len(cur_lc) < 4:
             cur_lc.append(1.0)
-        nr, ng, nb, na = _render_color_bar(ctx, "##btn_label_color", cur_lc[0], cur_lc[1], cur_lc[2], cur_lc[3])
+        nr, ng, nb, na = _render_color_bar(ctx, "##btn_label_color", cur_lc[0], cur_lc[1], cur_lc[2], cur_lc[3], allow_hdr=True)
         new_lc = [nr, ng, nb, na]
         if tuple(new_lc) != tuple(cur_lc[:4]):
             _apply_if_changed(btn_comp, "label_color", cur_lc[:4], new_lc)
@@ -884,7 +884,7 @@ def _render_button_inspector(ctx, btn_comp: UIButton):
         cur_bg = list(btn_comp.background_color or list(Theme.UI_DEFAULT_BUTTON_BG))
         while len(cur_bg) < 4:
             cur_bg.append(1.0)
-        nr, ng, nb, na = _render_color_bar(ctx, "##btn_bg_color", cur_bg[0], cur_bg[1], cur_bg[2], cur_bg[3])
+        nr, ng, nb, na = _render_color_bar(ctx, "##btn_bg_color", cur_bg[0], cur_bg[1], cur_bg[2], cur_bg[3], allow_hdr=True)
         new_bg = [nr, ng, nb, na]
         if tuple(new_bg) != tuple(cur_bg[:4]):
             _apply_if_changed(btn_comp, "background_color", cur_bg[:4], new_bg)
@@ -902,7 +902,7 @@ def _render_button_inspector(ctx, btn_comp: UIButton):
             cur = list(getattr(btn_comp, field_name) or [1, 1, 1, 1])
             while len(cur) < 4:
                 cur.append(1.0)
-            nr, ng, nb, na = _render_color_bar(ctx, f"##btn_{field_name}", cur[0], cur[1], cur[2], cur[3])
+            nr, ng, nb, na = _render_color_bar(ctx, f"##btn_{field_name}", cur[0], cur[1], cur[2], cur[3], allow_hdr=True)
             new_val = [nr, ng, nb, na]
             if tuple(new_val) != tuple(cur[:4]):
                 _apply_if_changed(btn_comp, field_name, cur[:4], new_val)

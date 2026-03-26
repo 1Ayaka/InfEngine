@@ -847,6 +847,78 @@ void InfVkCoreModular::CreateMaterialShadowPipeline(std::shared_ptr<InfMaterial>
 
     VkDevice device = GetDevice();
 
+    std::string materialKey = material->GetMaterialKey();
+    if (materialKey.empty()) {
+        materialKey = material->GetName();
+    }
+
+    MaterialRenderData *forwardRenderData = m_materialPipelineManager.GetRenderData(materialKey);
+    MaterialDescriptorSet *forwardMaterialDesc = forwardRenderData ? forwardRenderData->materialDescSet : nullptr;
+    ShaderProgram *forwardProgram = forwardRenderData ? forwardRenderData->shaderProgram : nullptr;
+    bool needsShadowMaterialDesc = forwardProgram && forwardProgram->HasVertexMaterialUBO();
+
+    auto retireOldShadowDescriptorSet = [&](VkDescriptorSet descriptorSet) {
+        if (descriptorSet == VK_NULL_HANDLE || m_shadowMaterialDescPool == VK_NULL_HANDLE) {
+            return;
+        }
+        if (m_shadowPipelineReady) {
+            VkDevice dev = device;
+            VkDescriptorPool pool = m_shadowMaterialDescPool;
+            m_deletionQueue.Push([dev, pool, descriptorSet]() {
+                vkFreeDescriptorSets(dev, pool, 1, &descriptorSet);
+            });
+        } else {
+            vkFreeDescriptorSets(device, m_shadowMaterialDescPool, 1, &descriptorSet);
+        }
+    };
+
+    if (needsShadowMaterialDesc) {
+        if (!forwardMaterialDesc || !forwardMaterialDesc->vertexMaterialUBO ||
+            !forwardMaterialDesc->vertexMaterialUBO->IsValid()) {
+            INFLOG_WARN("CreateMaterialShadowPipeline: missing forward vertex material UBO for material '",
+                        material->GetName(), "'");
+            return;
+        }
+
+        VkDescriptorSet oldShadowDescSet = material->GetPassDescriptorSet(ShaderCompileTarget::Shadow);
+        if (oldShadowDescSet != VK_NULL_HANDLE) {
+            retireOldShadowDescriptorSet(oldShadowDescSet);
+            material->SetPassDescriptorSet(ShaderCompileTarget::Shadow, VK_NULL_HANDLE);
+        }
+
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = m_shadowMaterialDescPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &m_shadowMaterialDescSetLayout;
+
+        VkDescriptorSet shadowMaterialDescSet = VK_NULL_HANDLE;
+        if (vkAllocateDescriptorSets(device, &allocInfo, &shadowMaterialDescSet) != VK_SUCCESS) {
+            INFLOG_WARN("CreateMaterialShadowPipeline: failed to allocate shadow material descriptor set for '",
+                        material->GetName(), "'");
+            return;
+        }
+
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = forwardMaterialDesc->vertexMaterialUBO->GetBuffer();
+        bufferInfo.offset = 0;
+        bufferInfo.range = forwardMaterialDesc->vertexMaterialUBO->GetSize();
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = shadowMaterialDescSet;
+        write.dstBinding = 14;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        write.pBufferInfo = &bufferInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+        material->SetPassDescriptorSet(ShaderCompileTarget::Shadow, shadowMaterialDescSet);
+    } else {
+        retireOldShadowDescriptorSet(material->GetPassDescriptorSet(ShaderCompileTarget::Shadow));
+        material->SetPassDescriptorSet(ShaderCompileTarget::Shadow, VK_NULL_HANDLE);
+    }
+
     // Vertex shader: prefer shadow vertex variant, fall back to forward pass vertex shader
     std::string shadowVertName = vertShaderName + "/shadow";
     std::string shadowFragName = fragShaderName + "/shadow";

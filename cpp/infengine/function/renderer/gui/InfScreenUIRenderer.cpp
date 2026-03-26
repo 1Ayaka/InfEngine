@@ -31,6 +31,19 @@ float ResolveFontSize(float fontSize)
     return textlayout::ResolveFontSize(fontSize);
 }
 
+float ExtractHDRScale(float &r, float &g, float &b)
+{
+    const float maxRGB = std::max(r, std::max(g, b));
+    if (maxRGB <= 1.0f) {
+        return 1.0f;
+    }
+
+    r /= maxRGB;
+    g /= maxRGB;
+    b /= maxRGB;
+    return maxRGB;
+}
+
 ImTextureID ToImTextureID(uint64_t textureId)
 {
     if constexpr (std::is_pointer_v<ImTextureID>) {
@@ -230,6 +243,8 @@ void InfScreenUIRenderer::BeginFrame(uint32_t width, uint32_t height)
 
     m_frameWidth = width;
     m_frameHeight = height;
+    m_cameraHDRRanges.clear();
+    m_overlayHDRRanges.clear();
 
     // Reset draw lists for new frame
     m_cameraDrawList->_ResetForNewFrame();
@@ -247,8 +262,11 @@ void InfScreenUIRenderer::AddFilledRect(ScreenUIList list, float minX, float min
     ImDrawList *dl = GetDrawList(list);
     if (!dl)
         return;
+    const int vtxStart = dl->VtxBuffer.Size;
+    const float hdrScale = ExtractHDRScale(r, g, b);
     ImU32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a));
     dl->AddRectFilled(ImVec2(minX, minY), ImVec2(maxX, maxY), col, rounding);
+    TrackHDRColorRange(list, vtxStart, dl->VtxBuffer.Size, hdrScale);
 }
 
 void InfScreenUIRenderer::AddImage(ScreenUIList list, uint64_t textureId, float minX, float minY, float maxX,
@@ -258,8 +276,9 @@ void InfScreenUIRenderer::AddImage(ScreenUIList list, uint64_t textureId, float 
     ImDrawList *dl = GetDrawList(list);
     if (!dl || textureId == 0)
         return;
-    ImU32 tint = ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a));
     const int vtxStart = dl->VtxBuffer.Size;
+    const float hdrScale = ExtractHDRScale(r, g, b);
+    ImU32 tint = ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a));
     if (rounding > 0.5f)
         dl->AddImageRounded(ToImTextureID(textureId), ImVec2(minX, minY), ImVec2(maxX, maxY), ImVec2(uv0X, uv0Y),
                             ImVec2(uv1X, uv1Y), tint, rounding);
@@ -271,7 +290,10 @@ void InfScreenUIRenderer::AddImage(ScreenUIList list, uint64_t textureId, float 
     if (rotation < 0.0f)
         rotation += 360.0f;
     if ((std::fabs(rotation) < 0.001f) && !mirrorH && !mirrorV)
+    {
+        TrackHDRColorRange(list, vtxStart, dl->VtxBuffer.Size, hdrScale);
         return;
+    }
 
     const float radians = rotation * 3.14159265358979f / 180.0f;
     const float cosA = std::cos(radians);
@@ -287,6 +309,7 @@ void InfScreenUIRenderer::AddImage(ScreenUIList list, uint64_t textureId, float 
         const float ry = local.x * sinA + local.y * cosA;
         dl->VtxBuffer[i].pos = ImVec2(pivot.x + rx, pivot.y + ry);
     }
+    TrackHDRColorRange(list, vtxStart, dl->VtxBuffer.Size, hdrScale);
 }
 
 void InfScreenUIRenderer::AddText(ScreenUIList list, float minX, float minY, float maxX, float maxY,
@@ -305,6 +328,7 @@ void InfScreenUIRenderer::AddText(ScreenUIList list, float minX, float minY, flo
     float boxW = maxX - minX;
     float boxH = maxY - minY;
 
+    const float hdrScale = ExtractHDRScale(r, g, b);
     ImU32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a));
     const int vtxStart = dl->VtxBuffer.Size;
     dl->PushTextureID(ImGui::GetIO().Fonts->TexRef);
@@ -315,7 +339,10 @@ void InfScreenUIRenderer::AddText(ScreenUIList list, float minX, float minY, flo
     if (rotation < 0.0f)
         rotation += 360.0f;
     if ((std::fabs(rotation) < 0.001f) && !mirrorH && !mirrorV)
+    {
+        TrackHDRColorRange(list, vtxStart, dl->VtxBuffer.Size, hdrScale);
         return;
+    }
 
     const float radians = rotation * 3.14159265358979f / 180.0f;
     const float cosA = std::cos(radians);
@@ -331,6 +358,7 @@ void InfScreenUIRenderer::AddText(ScreenUIList list, float minX, float minY, flo
         const float ry = local.x * sinA + local.y * cosA;
         dl->VtxBuffer[i].pos = ImVec2(pivot.x + rx, pivot.y + ry);
     }
+    TrackHDRColorRange(list, vtxStart, dl->VtxBuffer.Size, hdrScale);
 }
 
 std::pair<float, float> InfScreenUIRenderer::MeasureText(const std::string &text, float fontSize, float wrapWidth,
@@ -346,6 +374,26 @@ bool InfScreenUIRenderer::HasCommands(ScreenUIList list) const
 {
     const ImDrawList *dl = GetDrawList(list);
     return dl && dl->CmdBuffer.Size > 0 && dl->VtxBuffer.Size > 0;
+}
+
+void InfScreenUIRenderer::TrackHDRColorRange(ScreenUIList list, int vertexStart, int vertexEnd, float rgbScale)
+{
+    if (rgbScale <= 1.0f || vertexEnd <= vertexStart) {
+        return;
+    }
+
+    auto &ranges = GetHDRRanges(list);
+    ranges.push_back({vertexStart, vertexEnd, rgbScale});
+}
+
+std::vector<InfScreenUIRenderer::HDRColorRange> &InfScreenUIRenderer::GetHDRRanges(ScreenUIList list)
+{
+    return (list == ScreenUIList::Camera) ? m_cameraHDRRanges : m_overlayHDRRanges;
+}
+
+const std::vector<InfScreenUIRenderer::HDRColorRange> &InfScreenUIRenderer::GetHDRRanges(ScreenUIList list) const
+{
+    return (list == ScreenUIList::Camera) ? m_cameraHDRRanges : m_overlayHDRRanges;
 }
 
 // ============================================================================
@@ -373,14 +421,44 @@ void InfScreenUIRenderer::Render(VkCommandBuffer cmdBuf, ScreenUIList list, uint
     }
 
     // ---- Upload vertex/index data ----
-    VkDeviceSize vtxSize = dl->VtxBuffer.Size * sizeof(ImDrawVert);
+    std::vector<GPUVertex> gpuVertices;
+    gpuVertices.resize(static_cast<size_t>(dl->VtxBuffer.Size));
+
+    const auto &hdrRanges = GetHDRRanges(list);
+    size_t rangeIndex = 0;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+        while (rangeIndex < hdrRanges.size() && i >= hdrRanges[rangeIndex].vertexEnd) {
+            ++rangeIndex;
+        }
+
+        float rgbScale = 1.0f;
+        if (rangeIndex < hdrRanges.size()) {
+            const HDRColorRange &range = hdrRanges[rangeIndex];
+            if (i >= range.vertexStart && i < range.vertexEnd) {
+                rgbScale = range.rgbScale;
+            }
+        }
+
+        const ImDrawVert &src = dl->VtxBuffer[i];
+        GPUVertex &dst = gpuVertices[static_cast<size_t>(i)];
+        dst.pos = src.pos;
+        dst.uv = src.uv;
+
+        const ImVec4 unpacked = ImGui::ColorConvertU32ToFloat4(src.col);
+        dst.color[0] = unpacked.x * rgbScale;
+        dst.color[1] = unpacked.y * rgbScale;
+        dst.color[2] = unpacked.z * rgbScale;
+        dst.color[3] = unpacked.w;
+    }
+
+    VkDeviceSize vtxSize = gpuVertices.size() * sizeof(GPUVertex);
     VkDeviceSize idxSize = dl->IdxBuffer.Size * sizeof(ImDrawIdx);
     EnsureBuffers(vtxSize, idxSize);
 
     // Map and copy vertex data
     void *vtxDst = nullptr;
     vmaMapMemory(m_allocator, m_vertexAlloc, &vtxDst);
-    memcpy(vtxDst, dl->VtxBuffer.Data, vtxSize);
+    memcpy(vtxDst, gpuVertices.data(), vtxSize);
     vmaUnmapMemory(m_allocator, m_vertexAlloc);
 
     void *idxDst = nullptr;
@@ -607,19 +685,19 @@ bool InfScreenUIRenderer::CreatePipeline()
     stages[1].pName = "main";
 
     VkVertexInputBindingDescription bindingDesc{};
-    bindingDesc.stride = sizeof(ImDrawVert);
+    bindingDesc.stride = sizeof(GPUVertex);
     bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
     VkVertexInputAttributeDescription attrDesc[3]{};
     attrDesc[0].location = 0;
     attrDesc[0].format = VK_FORMAT_R32G32_SFLOAT;
-    attrDesc[0].offset = offsetof(ImDrawVert, pos);
+    attrDesc[0].offset = offsetof(GPUVertex, pos);
     attrDesc[1].location = 1;
     attrDesc[1].format = VK_FORMAT_R32G32_SFLOAT;
-    attrDesc[1].offset = offsetof(ImDrawVert, uv);
+    attrDesc[1].offset = offsetof(GPUVertex, uv);
     attrDesc[2].location = 2;
-    attrDesc[2].format = VK_FORMAT_R8G8B8A8_UNORM;
-    attrDesc[2].offset = offsetof(ImDrawVert, col);
+    attrDesc[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attrDesc[2].offset = offsetof(GPUVertex, color);
 
     VkPipelineVertexInputStateCreateInfo vertInput{};
     vertInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

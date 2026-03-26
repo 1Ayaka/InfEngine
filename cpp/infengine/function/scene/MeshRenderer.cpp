@@ -684,7 +684,9 @@ bool MeshRenderer::Deserialize(const std::string &jsonStr)
                         v.normal.y = vj["normal"][1].get<float>();
                         v.normal.z = vj["normal"][2].get<float>();
                     } else {
-                        v.normal = glm::vec3(0.0f, 1.0f, 0.0f); // default up normal for legacy scenes
+                        // Legacy scenes saved before normal serialization was added.
+                        // TODO(post-release): drop once all .scene files are re-saved.
+                        v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
                     }
                     if (vj.contains("tangent") && vj["tangent"].is_array() && vj["tangent"].size() == 4) {
                         v.tangent.x = vj["tangent"][0].get<float>();
@@ -692,7 +694,9 @@ bool MeshRenderer::Deserialize(const std::string &jsonStr)
                         v.tangent.z = vj["tangent"][2].get<float>();
                         v.tangent.w = vj["tangent"][3].get<float>();
                     } else {
-                        v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f); // default tangent for legacy scenes
+                        // Legacy scenes saved before tangent serialization was added.
+                        // TODO(post-release): drop once all .scene files are re-saved.
+                        v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
                     }
                     if (vj.contains("color") && vj["color"].is_array() && vj["color"].size() == 3) {
                         v.color.x = vj["color"][0].get<float>();

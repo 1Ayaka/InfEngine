@@ -926,6 +926,7 @@ class InfVkCoreModular
         const DrawCall *dc;
         std::unordered_map<uint64_t, PerObjectBuffers>::const_iterator bufIt;
         VkPipeline shadowPipeline;
+        VkDescriptorSet shadowMaterialDescSet = VK_NULL_HANDLE;
         AABB worldBounds; // Cached for per-cascade frustum culling
     };
     std::vector<ShadowDraw> m_shadowDrawScratch;
@@ -939,7 +940,9 @@ class InfVkCoreModular
     // ========================================================================
     VkPipelineLayout m_shadowPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_shadowDescSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_shadowMaterialDescSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_shadowDescPool = VK_NULL_HANDLE;
+    VkDescriptorPool m_shadowMaterialDescPool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_shadowDescSets;
     std::vector<VkBuffer> m_shadowUboBuffers;
     std::vector<VmaAllocation> m_shadowUboAllocations;

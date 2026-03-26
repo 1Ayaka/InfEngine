@@ -69,6 +69,7 @@ class UIText(InfUIScreenComponent):
     color: list = serialized_field(
         default=[1.0, 1.0, 1.0, 1.0],
         field_type=FieldType.COLOR,
+        hdr=True,
         tooltip="Text color (RGBA)",
         group="Fill",
     )

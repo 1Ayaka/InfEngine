@@ -127,6 +127,11 @@ class ShaderProgram
         return m_hasMaterialUBO ? &m_materialUBOLayout : nullptr;
     }
 
+    [[nodiscard]] const MaterialUBOLayout *GetVertexMaterialUBOLayout() const
+    {
+        return m_hasVertexMaterialUBO ? &m_vertexMaterialUBOLayout : nullptr;
+    }
+
     [[nodiscard]] const ShaderReflection &GetVertexReflection() const
     {
         return m_vertReflection;
@@ -147,6 +152,11 @@ class ShaderProgram
     [[nodiscard]] bool HasMaterialUBO() const
     {
         return m_hasMaterialUBO;
+    }
+
+    [[nodiscard]] bool HasVertexMaterialUBO() const
+    {
+        return m_hasVertexMaterialUBO;
     }
 
     /**
@@ -195,6 +205,10 @@ class ShaderProgram
     // Material UBO layout (if present)
     MaterialUBOLayout m_materialUBOLayout;
     bool m_hasMaterialUBO = false;
+
+    // Vertex-stage material UBO layout (if present, binding 14)
+    MaterialUBOLayout m_vertexMaterialUBOLayout;
+    bool m_hasVertexMaterialUBO = false;
 
     /**
      * @brief Create shader module from SPIR-V

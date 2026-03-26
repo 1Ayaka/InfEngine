@@ -260,6 +260,107 @@ def sync_properties_from_shader(mat_data: dict, shader_id: str, ext: str,
             del props[k]
 
 
+def sync_all_shader_properties(mat_data: dict, vert_shader_id: str, frag_shader_id: str,
+                               remove_unknown: bool = False):
+    """Sync material properties from both vertex and fragment shader annotations.
+
+    Merges @property annotations from both shaders.  Vertex properties appear
+    first in the display order, followed by fragment properties.
+    If *remove_unknown* is True, removes properties not defined in either shader.
+    """
+    type_map = {
+        'Float': 0,
+        'Float2': 1,
+        'Float3': 2,
+        'Float4': 3,
+        'Color': 7,
+        'Int': 4,
+        'Mat4': 5,
+        'Texture2D': 6
+    }
+
+    all_props: list[dict] = []
+
+    if vert_shader_id:
+        vert_path = get_shader_file_path(vert_shader_id, ".vert")
+        if vert_path:
+            all_props.extend(parse_shader_properties(vert_path))
+
+    if frag_shader_id:
+        frag_path = get_shader_file_path(frag_shader_id, ".frag")
+        if frag_path:
+            all_props.extend(parse_shader_properties(frag_path))
+
+    if not all_props:
+        return
+
+    props = mat_data.setdefault("properties", {})
+    # Combined ordering: vert properties first, then frag (deduped)
+    seen_names: set[str] = set()
+    ordered_names: list[str] = []
+    for sp in all_props:
+        name = sp.get('name', '')
+        if name and name not in seen_names:
+            ordered_names.append(name)
+            seen_names.add(name)
+    mat_data["_shader_property_order"] = ordered_names
+
+    shader_prop_names: set[str] = set()
+    for sp in all_props:
+        name = sp.get('name', '')
+        ptype_str = sp.get('type', 'Float')
+        default = sp.get('default')
+        hdr = sp.get('hdr', False)
+
+        if not name:
+            continue
+
+        shader_prop_names.add(name)
+        ptype = type_map.get(ptype_str, 0)
+
+        if name in props:
+            props[name]['type'] = ptype
+            props[name]['hdr'] = hdr
+        else:
+            if ptype == 6:
+                props[name] = {
+                    'type': ptype,
+                    'guid': "",
+                    'hdr': hdr,
+                }
+            else:
+                props[name] = {
+                    'type': ptype,
+                    'value': default,
+                    'hdr': hdr,
+                }
+
+    if remove_unknown:
+        props_to_remove = [k for k in props if k not in shader_prop_names]
+        for k in props_to_remove:
+            del props[k]
+
+
+def get_all_shader_property_names(vert_shader_id: str, frag_shader_id: str) -> list[str]:
+    """Return all declared material property names from the active vertex and fragment shaders."""
+    ordered_names: list[str] = []
+    seen_names: set[str] = set()
+
+    for shader_id, ext in ((vert_shader_id, ".vert"), (frag_shader_id, ".frag")):
+        if not shader_id:
+            continue
+        shader_path = get_shader_file_path(shader_id, ext)
+        if not shader_path:
+            continue
+        for sp in parse_shader_properties(shader_path):
+            name = sp.get("name", "")
+            if name and name not in seen_names:
+                ordered_names.append(name)
+                seen_names.add(name)
+
+    return ordered_names
+
+
 def get_material_property_display_order(mat_data: dict) -> list[str]:
     """Return material properties in shader declaration order only.
 

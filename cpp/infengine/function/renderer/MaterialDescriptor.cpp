@@ -228,7 +228,7 @@ VkDescriptorPool MaterialDescriptorManager::CreateDescriptorPool(uint32_t maxMat
     // - 1 uniform buffer (lighting UBO, binding 1)
     // - 1 uniform buffer (material UBO, binding 3)
     // - up to 8 combined image samplers (albedo, normal, shadow, etc.)
-    std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxMaterials * 4},
+    std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxMaterials * 5},
                                                    {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, maxMaterials * 8}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -265,12 +265,21 @@ MaterialDescriptorSet *MaterialDescriptorManager::GetOrCreateDescriptorSet(const
     // Check if already exists AND uses the same layout
     auto it = m_descriptorSets.find(materialName);
     if (it != m_descriptorSets.end() && it->second->isValid) {
+        const MaterialUBOLayout *requiredMaterialLayout = program.GetMaterialUBOLayout();
+        const MaterialUBOLayout *requiredVertexMaterialLayout = program.GetVertexMaterialUBOLayout();
+        bool needsMaterialUBO = requiredMaterialLayout != nullptr && requiredMaterialLayout->size > 0;
+        bool needsVertexMaterialUBO = requiredVertexMaterialLayout != nullptr && requiredVertexMaterialLayout->size > 0;
+        bool hasMaterialUBO = it->second->materialUBO && it->second->materialUBO->IsValid();
+        bool hasVertexMaterialUBO = it->second->vertexMaterialUBO && it->second->vertexMaterialUBO->IsValid();
+
         // CRITICAL: Must verify layout matches - shader may have changed
-        if (it->second->layout == requiredLayout) {
+        if (it->second->layout == requiredLayout && needsMaterialUBO == hasMaterialUBO &&
+            needsVertexMaterialUBO == hasVertexMaterialUBO) {
             INFLOG_DEBUG("GetOrCreateDescriptorSet: REUSING cached descriptor for '", materialName, "'");
             return it->second.get();
         } else {
-            INFLOG_INFO("Material '", materialName, "' shader changed, recreating descriptor set");
+            INFLOG_INFO("Material '", materialName,
+                        "' descriptor requirements changed, recreating descriptor set");
             // Defer destruction of the old descriptor set + UBO.  The GPU
             // may still be referencing them in an in-flight command buffer.
             // Use shared_ptr so the lambda is copy-constructible (std::function requirement).
@@ -336,6 +345,17 @@ MaterialDescriptorSet *MaterialDescriptorManager::GetOrCreateDescriptorSet(const
         } else {
             // Update UBO with current material values
             matDescSet->materialUBO->Update(material);
+        }
+    }
+
+    // Create vertex-stage material UBO if the vertex shader declares @property fields (binding 14)
+    const MaterialUBOLayout *vertUboLayout = program.GetVertexMaterialUBOLayout();
+    if (vertUboLayout != nullptr && vertUboLayout->size > 0) {
+        matDescSet->vertexMaterialUBO = std::make_unique<MaterialUBO>();
+        if (!matDescSet->vertexMaterialUBO->Create(m_vmaAllocator, m_device, *vertUboLayout)) {
+            INFLOG_ERROR("Failed to create vertex material UBO for: ", materialName);
+        } else {
+            matDescSet->vertexMaterialUBO->Update(material);
         }
     }
 
@@ -483,7 +503,17 @@ void MaterialDescriptorManager::UpdateDescriptorBindings(MaterialDescriptorSet &
             const MaterialUBOLayout *matLayout = program.GetMaterialUBOLayout();
             bool isMaterialUBOBinding = matLayout && matLayout->size > 0 && binding.binding == matLayout->binding;
 
-            if (isMaterialUBOBinding && matDescSet.materialUBO && matDescSet.materialUBO->IsValid()) {
+            const MaterialUBOLayout *vertMatLayout = program.GetVertexMaterialUBOLayout();
+            bool isVertexMaterialUBOBinding =
+                vertMatLayout && vertMatLayout->size > 0 && binding.binding == vertMatLayout->binding;
+
+            if (isVertexMaterialUBOBinding && matDescSet.vertexMaterialUBO &&
+                matDescSet.vertexMaterialUBO->IsValid()) {
+                // Vertex-stage material UBO at binding 14
+                bufferInfo.buffer = matDescSet.vertexMaterialUBO->GetBuffer();
+                bufferInfo.offset = 0;
+                bufferInfo.range = matDescSet.vertexMaterialUBO->GetSize();
+            } else if (isMaterialUBOBinding && matDescSet.materialUBO && matDescSet.materialUBO->IsValid()) {
                 // Material UBO — identified by shader reflection binding number
                 bufferInfo.buffer = matDescSet.materialUBO->GetBuffer();
                 bufferInfo.offset = 0;
@@ -548,8 +578,13 @@ void MaterialDescriptorManager::UpdateDescriptorBindings(MaterialDescriptorSet &
 void MaterialDescriptorManager::UpdateMaterialUBO(const std::string &materialName, const InfMaterial &material)
 {
     auto it = m_descriptorSets.find(materialName);
-    if (it != m_descriptorSets.end() && it->second->materialUBO) {
-        it->second->materialUBO->Update(material);
+    if (it != m_descriptorSets.end()) {
+        if (it->second->materialUBO) {
+            it->second->materialUBO->Update(material);
+        }
+        if (it->second->vertexMaterialUBO) {
+            it->second->vertexMaterialUBO->Update(material);
+        }
     }
 }
 

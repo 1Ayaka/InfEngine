@@ -25,6 +25,7 @@ class UIImage(InfUIScreenComponent):
     color: list = serialized_field(
         default=[1.0, 1.0, 1.0, 1.0],
         field_type=FieldType.COLOR,
+        hdr=True,
         tooltip="Tint color (RGBA)",
         group="Fill",
     )

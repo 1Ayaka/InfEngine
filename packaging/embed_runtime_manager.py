@@ -52,13 +52,6 @@ def _default_runtime_dir() -> str:
     return str(_RUNTIME_ROOT)
 
 
-def _legacy_runtime_dir() -> str:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        return os.path.join(local_app_data, "InfEngineHub", "runtime")
-    return str(_RUNTIME_ROOT)
-
-
 def _emit_status(callback: Optional[Callable[[str], None]], message: str) -> None:
     if callback is not None:
         callback(message)
@@ -352,8 +345,6 @@ class PythonRuntimeManager:
 
     def get_runtime_path(self) -> Optional[str]:
         roots = [self.private_runtime_root()]
-        if not is_frozen():
-            roots.append(os.path.join(_legacy_runtime_dir(), "python312"))
         for root in roots:
             candidate = _find_python_in_root(root)
             if candidate and _is_python312(candidate) and not _is_embedded_root(root):

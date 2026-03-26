@@ -701,7 +701,8 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
         }
         if (pip == VK_NULL_HANDLE)
             continue; // no per-material shadow pipeline available, skip
-        m_shadowDrawScratch.push_back({&dc, bufIt, pip, dc.worldBounds});
+        m_shadowDrawScratch.push_back(
+            {&dc, bufIt, pip, dc.material->GetPassDescriptorSet(ShaderCompileTarget::Shadow), dc.worldBounds});
     }
 
 #if INFENGINE_FRAME_PROFILE
@@ -795,6 +796,7 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
 
         const Frustum &cascadeFrustum = cascadeFrustums[ci];
         VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
+        VkDescriptorSet lastBoundShadowMaterialDescSet = VK_NULL_HANDLE;
 
         // Per-cascade frustum cull into a compact index list, then upload
         // model matrices for visible objects and batch by (pipeline, VB, submesh).
@@ -841,6 +843,7 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
         size_t batchStart = 0;
         uint32_t batchCount = 0;
         VkPipeline batchPipeline = VK_NULL_HANDLE;
+        VkDescriptorSet batchShadowMaterialDescSet = VK_NULL_HANDLE;
         uint32_t batchIdxStart = 0;
         uint32_t batchIdxCount = 0;
         int32_t batchVtxStart = 0;
@@ -872,6 +875,7 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
             VkBuffer vb = sd.bufIt->second.vertexBuffer->GetBuffer();
 
             bool canExtend = batchCount > 0 && sd.shadowPipeline == batchPipeline && vb == currentVertexBuffer &&
+                             sd.shadowMaterialDescSet == batchShadowMaterialDescSet &&
                              sd.dc->indexStart == batchIdxStart && sd.dc->indexCount == batchIdxCount &&
                              sd.dc->vertexStart == batchVtxStart;
 
@@ -888,6 +892,13 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
                 lastBoundPipeline = sd.shadowPipeline;
             }
 
+            if (sd.shadowMaterialDescSet != lastBoundShadowMaterialDescSet &&
+                sd.shadowMaterialDescSet != VK_NULL_HANDLE) {
+                vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipelineLayout, 2, 1,
+                                        &sd.shadowMaterialDescSet, 0, nullptr);
+                lastBoundShadowMaterialDescSet = sd.shadowMaterialDescSet;
+            }
+
             if (vb != currentVertexBuffer) {
                 VkDeviceSize offsets[] = {0};
                 vkCmdBindVertexBuffers(cmdBuf, 0, 1, &vb, offsets);
@@ -898,6 +909,7 @@ void InfVkCoreModular::DrawShadowCasters(VkCommandBuffer cmdBuf, uint32_t width,
             batchStart = vi;
             batchCount = 1;
             batchPipeline = sd.shadowPipeline;
+            batchShadowMaterialDescSet = sd.shadowMaterialDescSet;
             batchIdxStart = sd.dc->indexStart;
             batchIdxCount = sd.dc->indexCount;
             batchVtxStart = sd.dc->vertexStart;
@@ -997,6 +1009,24 @@ bool InfVkCoreModular::EnsureShadowPipeline(VkRenderPass /*compatibleRenderPass*
         }
     }
 
+    if (m_shadowMaterialDescSetLayout == VK_NULL_HANDLE) {
+        VkDescriptorSetLayoutBinding materialBinding{};
+        materialBinding.binding = 14;
+        materialBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        materialBinding.descriptorCount = 1;
+        materialBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &materialBinding;
+
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &m_shadowMaterialDescSetLayout) != VK_SUCCESS) {
+            INFLOG_ERROR("Failed to create shadow material descriptor set layout");
+            return false;
+        }
+    }
+
     // --- Create descriptor pool (frames × cascades) ---
     const uint32_t totalSets = m_maxFramesInFlight * NUM_SHADOW_CASCADES;
     if (m_shadowDescPool == VK_NULL_HANDLE) {
@@ -1012,6 +1042,24 @@ bool InfVkCoreModular::EnsureShadowPipeline(VkRenderPass /*compatibleRenderPass*
 
         if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_shadowDescPool) != VK_SUCCESS) {
             INFLOG_ERROR("Failed to create shadow descriptor pool");
+            return false;
+        }
+    }
+
+    if (m_shadowMaterialDescPool == VK_NULL_HANDLE) {
+        VkDescriptorPoolSize poolSize{};
+        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSize.descriptorCount = 1024;
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        poolInfo.maxSets = 1024;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_shadowMaterialDescPool) != VK_SUCCESS) {
+            INFLOG_ERROR("Failed to create shadow material descriptor pool");
             return false;
         }
     }
@@ -1088,7 +1136,8 @@ bool InfVkCoreModular::EnsureShadowPipeline(VkRenderPass /*compatibleRenderPass*
     }
 
     // --- Create shadow pipeline layout (shared by all per-material shadow pipelines) ---
-    // Set 0 = shadow UBO (per-cascade), set 1 = globals (UBO + instance SSBO)
+    // Set 0 = shadow UBO (per-cascade), set 1 = globals (UBO + instance SSBO),
+    // set 2 = vertex material UBO (binding 14, when needed).
     if (m_globalsDescSetLayout == VK_NULL_HANDLE) {
         INFLOG_ERROR("EnsureShadowPipeline: m_globalsDescSetLayout is null — globals not yet initialized");
         return false;
@@ -1099,11 +1148,12 @@ bool InfVkCoreModular::EnsureShadowPipeline(VkRenderPass /*compatibleRenderPass*
         pushRange.offset = 0;
         pushRange.size = sizeof(glm::mat4) * 2; // model + normalMat
 
-        VkDescriptorSetLayout setLayouts[2] = {m_shadowDescSetLayout, m_globalsDescSetLayout};
+        VkDescriptorSetLayout setLayouts[3] = {m_shadowDescSetLayout, m_globalsDescSetLayout,
+                               m_shadowMaterialDescSetLayout};
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 2;
+        pipelineLayoutInfo.setLayoutCount = 3;
         pipelineLayoutInfo.pSetLayouts = setLayouts;
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
@@ -1159,6 +1209,14 @@ void InfVkCoreModular::CleanupShadowPipeline()
     if (m_shadowDescSetLayout != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(device, m_shadowDescSetLayout, nullptr);
         m_shadowDescSetLayout = VK_NULL_HANDLE;
+    }
+    if (m_shadowMaterialDescPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, m_shadowMaterialDescPool, nullptr);
+        m_shadowMaterialDescPool = VK_NULL_HANDLE;
+    }
+    if (m_shadowMaterialDescSetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, m_shadowMaterialDescSetLayout, nullptr);
+        m_shadowMaterialDescSetLayout = VK_NULL_HANDLE;
     }
     if (!m_shadowUboBuffers.empty()) {
         VmaAllocator allocator = m_deviceContext.GetVmaAllocator();

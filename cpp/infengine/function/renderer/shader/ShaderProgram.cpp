@@ -19,12 +19,16 @@ ShaderProgram::ShaderProgram(ShaderProgram &&other) noexcept
       m_fragModule(other.m_fragModule), m_vertReflection(std::move(other.m_vertReflection)),
       m_fragReflection(std::move(other.m_fragReflection)), m_descriptorBindings(std::move(other.m_descriptorBindings)),
       m_descriptorSetLayouts(std::move(other.m_descriptorSetLayouts)), m_pipelineLayout(other.m_pipelineLayout),
-      m_materialUBOLayout(std::move(other.m_materialUBOLayout)), m_hasMaterialUBO(other.m_hasMaterialUBO)
+            m_materialUBOLayout(std::move(other.m_materialUBOLayout)), m_hasMaterialUBO(other.m_hasMaterialUBO),
+            m_vertexMaterialUBOLayout(std::move(other.m_vertexMaterialUBOLayout)),
+            m_hasVertexMaterialUBO(other.m_hasVertexMaterialUBO)
 {
     other.m_device = VK_NULL_HANDLE;
     other.m_vertModule = VK_NULL_HANDLE;
     other.m_fragModule = VK_NULL_HANDLE;
     other.m_pipelineLayout = VK_NULL_HANDLE;
+        other.m_hasMaterialUBO = false;
+        other.m_hasVertexMaterialUBO = false;
     other.m_descriptorSetLayouts.clear();
 }
 
@@ -44,11 +48,15 @@ ShaderProgram &ShaderProgram::operator=(ShaderProgram &&other) noexcept
         m_pipelineLayout = other.m_pipelineLayout;
         m_materialUBOLayout = std::move(other.m_materialUBOLayout);
         m_hasMaterialUBO = other.m_hasMaterialUBO;
+        m_vertexMaterialUBOLayout = std::move(other.m_vertexMaterialUBOLayout);
+        m_hasVertexMaterialUBO = other.m_hasVertexMaterialUBO;
 
         other.m_device = VK_NULL_HANDLE;
         other.m_vertModule = VK_NULL_HANDLE;
         other.m_fragModule = VK_NULL_HANDLE;
         other.m_pipelineLayout = VK_NULL_HANDLE;
+        other.m_hasMaterialUBO = false;
+        other.m_hasVertexMaterialUBO = false;
         other.m_descriptorSetLayouts.clear();
     }
     return *this;
@@ -147,6 +155,8 @@ void ShaderProgram::Destroy()
     }
 
     m_descriptorBindings.clear();
+    m_hasMaterialUBO = false;
+    m_hasVertexMaterialUBO = false;
     m_device = VK_NULL_HANDLE;
 }
 
@@ -299,6 +309,7 @@ bool ShaderProgram::ValidateStageInterface() const
 void ShaderProgram::ExtractMaterialUBOLayout()
 {
     m_hasMaterialUBO = false;
+    m_hasVertexMaterialUBO = false;
 
     // Look for a UBO named "MaterialProperties" or "Material" in fragment shader
     // Convention: Material UBO can be at binding 2 or 3 depending on shader type (unlit vs lit)
@@ -314,6 +325,22 @@ void ShaderProgram::ExtractMaterialUBOLayout()
             m_hasMaterialUBO = true;
 
             INFLOG_DEBUG("Found material UBO '", ubo.name, "' at binding ", ubo.binding, " with ", ubo.members.size(),
+                         " members, size=", ubo.size);
+            break;
+        }
+    }
+
+    // Also look for a vertex-stage MaterialProperties UBO at binding 14
+    // (used when the vertex shader declares @property fields)
+    for (const auto &ubo : m_vertReflection.GetUniformBuffers()) {
+        if ((ubo.name == "MaterialProperties" || ubo.name == "Material" || ubo.name == "MaterialUBO") &&
+            ubo.binding == 14 && ubo.set == 0) {
+            m_vertexMaterialUBOLayout.binding = ubo.binding;
+            m_vertexMaterialUBOLayout.size = ubo.size;
+            m_vertexMaterialUBOLayout.members = ubo.members;
+            m_hasVertexMaterialUBO = true;
+
+            INFLOG_DEBUG("Found vertex material UBO '", ubo.name, "' at binding 14 with ", ubo.members.size(),
                          " members, size=", ubo.size);
             break;
         }

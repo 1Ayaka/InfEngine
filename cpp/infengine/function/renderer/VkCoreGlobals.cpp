@@ -313,29 +313,35 @@ void InfVkCoreModular::CmdUpdateGlobals(VkCommandBuffer cmdBuf)
 {
     if (!m_globalsDirty)
         return;
-    if (m_globalsBuffers.empty() || !m_globalsBuffers[0])
-        return;
 
-    VkBuffer buffer = m_globalsBuffers[0]->GetBuffer();
+    // Update ALL per-frame globals buffers so every frame-in-flight sees the
+    // latest values.  Each m_globalsDescSets[i] points at m_globalsBuffers[i],
+    // so we must write to every buffer — not just buffer 0.
+    for (size_t i = 0; i < m_globalsBuffers.size(); ++i) {
+        if (!m_globalsBuffers[i])
+            continue;
 
-    // Barrier: ensure previous shader reads from the globals UBO are complete
-    VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+        VkBuffer buffer = m_globalsBuffers[i]->GetBuffer();
 
-    // Update the globals UBO inline in the command buffer
-    // vkCmdUpdateBuffer has a 65536-byte limit; EngineGlobalsUBO is 128 bytes.
-    vkCmdUpdateBuffer(cmdBuf, buffer, 0, sizeof(EngineGlobalsUBO), &m_stagedGlobals);
+        // Barrier: ensure previous shader reads from the globals UBO are complete
+        VkMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 
-    // Barrier: ensure write is visible before subsequent shader reads
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
-    vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &barrier, 0,
-                         nullptr, 0, nullptr);
+        // Update the globals UBO inline in the command buffer
+        // vkCmdUpdateBuffer has a 65536-byte limit; EngineGlobalsUBO is 128 bytes.
+        vkCmdUpdateBuffer(cmdBuf, buffer, 0, sizeof(EngineGlobalsUBO), &m_stagedGlobals);
+
+        // Barrier: ensure write is visible before subsequent shader reads
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
+        vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                             &barrier, 0, nullptr, 0, nullptr);
+    }
 
     m_globalsDirty = false;
 }

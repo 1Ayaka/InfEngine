@@ -580,11 +580,18 @@ std::string InfShaderLoader::GenerateGLSL(const ShaderDescriptor &desc, const st
         result << "#define INF_SHADOW_PASS 1\n";
 
     // ================================================================
-    // Inject engine globals UBO (set 2) — always available except shadow
+    // Inject engine globals UBO — always available except shadow
+    // For shadow vertex with vertex(), inject at set 1 (shadow globals set)
     // ================================================================
+    bool shadowVertexNeedsGlobals =
+        (target == ShaderCompileTarget::Shadow && desc.isVertexShader && desc.hasVertexFunc);
     if (target != ShaderCompileTarget::Shadow) {
         result << "\n// Auto-generated engine globals UBO (set 2)\n";
         result << LoadTemplate("globals_ubo.glsl") << "\n";
+    } else if (shadowVertexNeedsGlobals) {
+        // Shadow pipeline has globals descriptor set at set 1 (not set 2)
+        result << "\n// Auto-generated engine globals UBO (set 1 — shadow pipeline)\n";
+        result << LoadTemplate("shadow_globals_ubo.glsl") << "\n";
     }
 
     // ================================================================
@@ -593,7 +600,6 @@ std::string InfShaderLoader::GenerateGLSL(const ShaderDescriptor &desc, const st
     if (!userHasLayoutDecls) {
         if (desc.isVertexShader && target == ShaderCompileTarget::Shadow) {
             // Shadow vertex variant: use shadow-specific builtins (shadow UBO at set 0)
-            // No InfGlobals (set 2) — shadow pipeline layout only provides set 0
             result << "\n// Auto-generated shadow vertex builtins\n";
             result << LoadTemplate("shadow_vertex_builtins.glsl") << "\n";
         } else if (desc.isFragmentShader && target == ShaderCompileTarget::Shadow) {
@@ -653,11 +659,27 @@ std::string InfShaderLoader::GenerateGLSL(const ShaderDescriptor &desc, const st
     // so that alpha clip can be toggled at runtime via material properties.
     bool isSurfaceFragment = desc.isFragmentShader && hasSurfaceFunc;
     bool needsMaterialUBO = !desc.properties.empty() || isSurfaceFragment;
-    if (target != ShaderCompileTarget::Shadow || shadowNeedsAlphaClip) {
+    // Vertex shaders with vertex() may need material properties in shadow (as constants)
+    bool shadowVertexNeedsMaterial =
+        (target == ShaderCompileTarget::Shadow && desc.isVertexShader && desc.hasVertexFunc &&
+         !desc.properties.empty());
+    if (target != ShaderCompileTarget::Shadow || shadowNeedsAlphaClip || shadowVertexNeedsMaterial) {
         if (needsMaterialUBO) {
-            int materialBinding = texBaseBinding + static_cast<int>(desc.textureProperties.size());
+            // Vertex shader MaterialProperties gets a dedicated high binding (14) to
+            // avoid collision with fragment-side bindings (lighting UBO, textures, etc.)
+            int materialBinding;
+            if (desc.isVertexShader) {
+                materialBinding = 14; // Reserved for vertex-stage material properties
+            } else {
+                materialBinding = texBaseBinding + static_cast<int>(desc.textureProperties.size());
+            }
             result << "\n// Auto-generated MaterialProperties UBO from @property annotations\n";
-            result << "layout(std140, binding = " << materialBinding << ") uniform MaterialProperties {\n";
+            if (target == ShaderCompileTarget::Shadow && desc.isVertexShader) {
+                result << "layout(std140, set = 2, binding = " << materialBinding
+                       << ") uniform MaterialProperties {\n";
+            } else {
+                result << "layout(std140, binding = " << materialBinding << ") uniform MaterialProperties {\n";
+            }
 
             auto writeByType = [&](const std::string &glslType) {
                 for (const auto &prop : desc.properties) {
@@ -684,8 +706,15 @@ std::string InfShaderLoader::GenerateGLSL(const ShaderDescriptor &desc, const st
     // ================================================================
     // User code (with annotation lines stripped)
     // Skip for shadow target unless alpha clip is needed
+    // OR vertex shader with vertex() function (shadow deformation)
     // ================================================================
-    if (target != ShaderCompileTarget::Shadow || shadowNeedsAlphaClip) {
+    if (target != ShaderCompileTarget::Shadow || shadowNeedsAlphaClip || shadowVertexNeedsMaterial) {
+        for (const auto &codeLine : codeLines) {
+            result << codeLine << "\n";
+        }
+    } else if (target == ShaderCompileTarget::Shadow && desc.isVertexShader && desc.hasVertexFunc &&
+               desc.properties.empty()) {
+        // Shadow vertex with vertex() but no @property — just include user code
         for (const auto &codeLine : codeLines) {
             result << codeLine << "\n";
         }

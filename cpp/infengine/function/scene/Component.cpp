@@ -248,6 +248,15 @@ bool Component::Deserialize(const std::string &jsonStr)
 {
     try {
         json j = json::parse(jsonStr);
+        // C++ components store schema_version = 1 (see Serialize()).  If a
+        // saved component lacks this field it predates the versioning system.
+        //
+        // NOTE: Python components have a *separate* schema migration path
+        // using __schema_version__ / __migrate__() on the Python class —
+        // see InfEngine.components.component._deserialize_fields().
+        // The two systems are independent: C++ versions track the base
+        // Component wire format; Python versions track per-script field
+        // layout changes.  Keep both in sync when adding new base fields.
         if (!j.contains("schema_version")) {
             INFLOG_WARN("Component::Deserialize: missing 'schema_version' field (legacy data)");
         }

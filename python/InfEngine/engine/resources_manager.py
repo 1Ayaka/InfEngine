@@ -117,10 +117,6 @@ class ResourceChangeHandler(FileSystemEventHandler):
                 if event.src_path.endswith('.py'):
                     self._queue_script_reload(event.src_path)
                 return
-            # Register the resource (with retry for files still being written)
-            # result = self._import_with_retry(event.src_path)
-            # if result:
-            #     Debug.log_internal(f"[Registered] {event.src_path} -> {result}")
             # Check Python scripts on creation
             if event.src_path.endswith('.py'):
                 self._queue_script_reload(event.src_path)

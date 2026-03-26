@@ -16,6 +16,7 @@ from InfEngine.lib import InfGUIContext
 from InfEngine.engine.i18n import t
 from InfEngine.engine.project_context import get_project_root
 from InfEngine.ui.enums import TextResizeMode
+from InfEngine.ui.inf_ui_screen_component import clear_rect_cache
 from InfEngine.ui.ui_texture_cache import get_shared_cache as _get_tex_cache
 from InfEngine.ui.ui_render_dispatch import dispatch as _ui_dispatch
 from InfEngine.ui.ui_canvas_utils import collect_canvases_with_go
@@ -341,26 +342,37 @@ class UIEditorPanel(EditorPanel):
                     text_comp.height = target_h
             return
 
+        # While the user is actively dragging or resizing, only adjust the
+        # auto-sized dimension (width or height) without touching x/y.
+        # set_size_preserve_corner rewrites x/y which fights the drag.
+        _interacting = (self._dragging or self._resizing)
+
         if getattr(text_comp, "is_auto_width", lambda: False)():
             target_w = max(1.0, float(measured_w) + float(pad_x))
             if abs(float(text_comp.width) - target_w) > _TOL:
-                text_comp.set_size_preserve_corner(
-                    target_w,
-                    float(text_comp.height),
-                    float(canvas.reference_width),
-                    float(canvas.reference_height),
-                    "top_left",
-                )
+                if _interacting:
+                    text_comp.width = target_w
+                else:
+                    text_comp.set_size_preserve_corner(
+                        target_w,
+                        float(text_comp.height),
+                        float(canvas.reference_width),
+                        float(canvas.reference_height),
+                        "top_left",
+                    )
         elif getattr(text_comp, "is_auto_height", lambda: False)():
             target_h = max(1.0, float(measured_h) + float(pad_y))
             if abs(float(text_comp.height) - target_h) > _TOL:
-                text_comp.set_size_preserve_corner(
-                    float(text_comp.width),
-                    target_h,
-                    float(canvas.reference_width),
-                    float(canvas.reference_height),
-                    "top_left",
-                )
+                if _interacting:
+                    text_comp.height = target_h
+                else:
+                    text_comp.set_size_preserve_corner(
+                        float(text_comp.width),
+                        target_h,
+                        float(canvas.reference_width),
+                        float(canvas.reference_height),
+                        "top_left",
+                    )
 
     # ------------------------------------------------------------------
     # EditorPanel hooks
@@ -517,6 +529,10 @@ class UIEditorPanel(EditorPanel):
         # ── Canvas reference dimensions ──
         ref_w = float(canvas.reference_width)
         ref_h = float(canvas.reference_height)
+
+        # Ensure rect cache is fresh — without this, interactions break
+        # when the Game View panel is hidden (it was the only caller).
+        clear_rect_cache(id(ctx))
 
         # ── Process ongoing interactions BEFORE drawing (zero-lag) ──
         if self._resizing:

@@ -14,6 +14,16 @@ class AssetDatabase;
 
 /// @brief Interface for type-specific asset loading/reloading in AssetRegistry.
 ///
+/// ── Architecture Note ──────────────────────────────────────────────
+/// This is the *runtime loading* layer of the asset pipeline.
+/// IAssetLoader turns already-imported assets into live in-memory objects.
+///
+/// The *import strategy* layer lives in AssetImporter/ (AssetImporter.h).
+/// That layer handles source-file processing and .meta generation.
+///
+/// See AssetImporter.h for the full two-layer pipeline description.
+/// ──────────────────────────────────────────────────────────────────
+///
 /// Each ResourceType registers one IAssetLoader implementation.
 /// AssetRegistry delegates Load / Reload / ScanDependencies to the loader.
 class IAssetLoader

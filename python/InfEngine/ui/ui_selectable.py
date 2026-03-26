@@ -44,19 +44,19 @@ class UISelectable(InfUIScreenComponent):
     # ── Color Tint ──
     normal_color: list = serialized_field(
         default=[1.0, 1.0, 1.0, 1.0], field_type=FieldType.COLOR,
-        tooltip="Tint when idle", group="ColorTint",
+        hdr=True, tooltip="Tint when idle", group="ColorTint",
     )
     highlighted_color: list = serialized_field(
         default=[0.96, 0.96, 0.96, 1.0], field_type=FieldType.COLOR,
-        tooltip="Tint when hovered", group="ColorTint",
+        hdr=True, tooltip="Tint when hovered", group="ColorTint",
     )
     pressed_color: list = serialized_field(
         default=[0.78, 0.78, 0.78, 1.0], field_type=FieldType.COLOR,
-        tooltip="Tint when pressed", group="ColorTint",
+        hdr=True, tooltip="Tint when pressed", group="ColorTint",
     )
     disabled_color: list = serialized_field(
         default=[0.78, 0.78, 0.78, 0.5], field_type=FieldType.COLOR,
-        tooltip="Tint when disabled", group="ColorTint",
+        hdr=True, tooltip="Tint when disabled", group="ColorTint",
     )
 
     def awake(self):
