@@ -188,11 +188,11 @@ class ProjectModel:
         Source builds are intentionally blocked here so project creation never
         falls back to a local C++ compile.
         """
-        venv_python = ProjectModel._get_project_python(project_dir)
-        if not os.path.isfile(venv_python):
+        project_python = ProjectModel._get_project_python(project_dir)
+        if not os.path.isfile(project_python):
             raise RuntimeError(
-                f"venv python not found at {venv_python}.\n"
-                "The virtual environment may not have been created correctly."
+                f"Project Python not found at {project_python}.\n"
+                "The project runtime may not have been created correctly."
             )
 
         wheel = ""
@@ -222,7 +222,7 @@ class ProjectModel:
         ]
 
         _run_hidden(
-            [venv_python, "-m", "pip", "install", "--force-reinstall", *_PIP_FLAGS, wheel],
+            [project_python, "-m", "pip", "install", "--force-reinstall", *_PIP_FLAGS, wheel],
             timeout=600,
         )
 

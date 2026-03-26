@@ -403,7 +403,7 @@ class PythonRuntimeManager:
         """Copy the full managed Python runtime to *dest_path* for a project.
 
         Each project owns its own complete Python copy so there is no need
-        for virtual-environment indirection or pyvenv.cfg.
+        for virtual-environment indirection.
         """
         self.ensure_runtime()
         source = self.private_runtime_root()
@@ -552,7 +552,6 @@ class PythonRuntimeManager:
                 "InstallLauncherAllUsers=0",
                 "Include_pip=1",
                 "Include_dev=1",
-                "Include_venv=1",
             ],
             timeout=3600,
             raise_on_error=False,

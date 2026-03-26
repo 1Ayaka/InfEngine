@@ -18,7 +18,6 @@ _BUILDER_PACKAGES = [
     "pip",
     "setuptools",
     "wheel",
-    "virtualenv",
     "ordered-set",
     "nuitka",
     "Pillow",
@@ -125,23 +124,6 @@ def _has_dev_support(root: str) -> bool:
     return any(os.path.isfile(os.path.join(libs_dir, name)) for name in _runtime_lib_names())
 
 
-def _copytree_if_needed(src: str, dest: str) -> None:
-    if not os.path.isdir(src):
-        return
-    shutil.rmtree(dest, ignore_errors=True)
-    shutil.copytree(src, dest)
-
-
-def _copy_libs_if_needed(src: str, dest: str) -> None:
-    if not os.path.isdir(src):
-        return
-    os.makedirs(dest, exist_ok=True)
-    for name in _runtime_lib_names():
-        source_path = os.path.join(src, name)
-        if os.path.isfile(source_path):
-            shutil.copy2(source_path, os.path.join(dest, name))
-
-
 def _ensure_builder_packages(root: str) -> None:
     target_python = _find_python_in_root(root)
     if not target_python:
@@ -164,7 +146,7 @@ def _ensure_builder_packages(root: str) -> None:
     verify = _run([
         target_python,
         "-c",
-        "import pip, virtualenv, nuitka, PIL, imageio, av; print('ok')",
+        "import pip, nuitka, PIL, imageio, av; print('ok')",
     ], timeout=60)
     if verify.returncode != 0:
         raise SystemExit(
@@ -233,7 +215,6 @@ def _install_full_runtime(dest_root: str) -> None:
         "InstallLauncherAllUsers=0",
         "Include_pip=1",
         "Include_dev=1",
-        "Include_venv=1",
     ], timeout=3600)
     if completed.returncode != 0:
         raise SystemExit(
@@ -249,7 +230,7 @@ def _is_usable_full_runtime(root: str) -> bool:
         and _is_python312(python_exe)
         and not _is_embedded_root(root)
         and _has_dev_support(root)
-        and _run([python_exe, "-c", "import pip, virtualenv, nuitka, PIL, imageio, av; print('ok')"], timeout=60).returncode == 0
+        and _run([python_exe, "-c", "import pip, nuitka, PIL, imageio, av; print('ok')"], timeout=60).returncode == 0
     )
 
 
