@@ -8,6 +8,7 @@
 #include "GameObject.h"
 #include "MeshRenderer.h"
 #include "Rigidbody.h"
+#include "SceneManager.h"
 #include "Transform.h"
 #include "physics/PhysicsECSStore.h"
 #include "physics/PhysicsWorld.h"
@@ -240,6 +241,11 @@ void Collider::RegisterBody()
 
     auto *go = GetGameObject();
     if (!go)
+        return;
+
+    // Skip physics body creation for objects in non-active scenes
+    // (e.g. prefab template cache) to avoid phantom colliders.
+    if (go->GetScene() != SceneManager::Instance().GetActiveScene())
         return;
 
     auto colliders = go->GetComponents<Collider>();

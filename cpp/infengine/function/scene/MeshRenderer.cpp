@@ -144,6 +144,12 @@ MeshRenderer::~MeshRenderer()
 
 void MeshRenderer::OnEnable()
 {
+    // Only register with the global renderer list if this object belongs to
+    // the active scene.  Objects living in utility scenes (e.g. the prefab
+    // template cache) must not pollute the active scene's render list.
+    if (auto *go = GetGameObject())
+        if (go->GetScene() != SceneManager::Instance().GetActiveScene())
+            return;
     SceneManager::Instance().RegisterMeshRenderer(this);
 }
 

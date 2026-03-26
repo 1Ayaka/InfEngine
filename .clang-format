@@ -13,3 +13,13 @@ BraceWrapping:
 
 AllowShortFunctionsOnASingleLine: None
 ColumnLimit: 120
+SortIncludes: true
+IncludeCategories:
+  - Regex: '^<Jolt/Jolt\.h>$'
+    Priority: 1
+  - Regex: '^<Jolt/.*>'
+    Priority: 2
+  - Regex: '^".*"$'
+    Priority: 3
+  - Regex: '^<.*>'
+    Priority: 4

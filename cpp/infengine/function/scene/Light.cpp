@@ -20,6 +20,11 @@ Light::~Light()
 
 void Light::OnEnable()
 {
+    // Only register with the global light list if this object belongs to
+    // the active scene.  Prefab template cache objects must not leak here.
+    if (auto *go = GetGameObject())
+        if (go->GetScene() != SceneManager::Instance().GetActiveScene())
+            return;
     SceneManager::Instance().RegisterLight(this);
 }
 
