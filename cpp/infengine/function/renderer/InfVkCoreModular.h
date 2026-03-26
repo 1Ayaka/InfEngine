@@ -283,6 +283,20 @@ class InfVkCoreModular
         return m_globalsDescSets[idx];
     }
 
+    /// @brief Get the globals UBO VkBuffer for a specific frame index.
+    [[nodiscard]] VkBuffer GetGlobalsBuffer(uint32_t frameIndex) const
+    {
+        if (frameIndex >= m_globalsBuffers.size() || !m_globalsBuffers[frameIndex])
+            return VK_NULL_HANDLE;
+        return m_globalsBuffers[frameIndex]->GetBuffer();
+    }
+
+    /// @brief Get max frames in flight.
+    [[nodiscard]] uint32_t GetMaxFramesInFlight() const
+    {
+        return m_maxFramesInFlight;
+    }
+
     /// @brief Update material UBO with current material properties (stub)
     void UpdateMaterialUBO(InfMaterial &material);
 

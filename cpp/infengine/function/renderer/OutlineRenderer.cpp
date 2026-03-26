@@ -7,11 +7,17 @@
 
 #include "OutlineRenderer.h"
 #include "InfVkCoreModular.h"
+#include "MaterialDescriptor.h"
+#include "MaterialPipelineManager.h"
 #include "SceneRenderTarget.h"
+#include "shader/ShaderProgram.h"
+#include <function/resources/InfMaterial/InfMaterial.h>
 
 #include <core/error/InfError.h>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+
+#include <vk_mem_alloc.h>
 
 #include <array>
 #include <cstring>
@@ -57,6 +63,7 @@ bool OutlineRenderer::Initialize(InfVkCoreModular *core, SceneRenderTarget *scen
     CreateOutlineFramebuffers();
     CreateOutlineDescriptorResources();
     CreateOutlinePipelines();
+    CreateOutlineMaterialResources();
 
     m_resourcesReady = true;
     INFLOG_INFO("OutlineRenderer: post-process outline resources initialized");
@@ -100,6 +107,39 @@ void OutlineRenderer::Cleanup()
     if (m_outlineDescPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(device, m_outlineDescPool, nullptr);
         m_outlineDescPool = VK_NULL_HANDLE;
+    }
+
+    // Per-material outline resources
+    for (auto &[key, pipeline] : m_perMtlOutlinePipelines) {
+        if (pipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(device, pipeline, nullptr);
+    }
+    m_perMtlOutlinePipelines.clear();
+    m_perMtlOutlineDescSets.clear(); // freed with pool below
+    m_outlineGlobalsDescSets.clear();
+
+    VmaAllocator allocator = m_core->GetDeviceContext().GetVmaAllocator();
+    for (auto &instBuf : m_outlineInstanceBufs) {
+        if (instBuf.buffer != VK_NULL_HANDLE)
+            vmaDestroyBuffer(allocator, instBuf.buffer, instBuf.allocation);
+    }
+    m_outlineInstanceBufs.clear();
+
+    if (m_outlineMtlDescPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, m_outlineMtlDescPool, nullptr);
+        m_outlineMtlDescPool = VK_NULL_HANDLE;
+    }
+    if (m_outlineMtlPipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, m_outlineMtlPipelineLayout, nullptr);
+        m_outlineMtlPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (m_outlineMtlSet0Layout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, m_outlineMtlSet0Layout, nullptr);
+        m_outlineMtlSet0Layout = VK_NULL_HANDLE;
+    }
+    if (m_emptyDescSetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, m_emptyDescSetLayout, nullptr);
+        m_emptyDescSetLayout = VK_NULL_HANDLE;
     }
     if (m_outlineMaskFramebuffer != VK_NULL_HANDLE) {
         vkDestroyFramebuffer(device, m_outlineMaskFramebuffer, nullptr);
@@ -665,6 +705,339 @@ void OutlineRenderer::CreateOutlinePipelines()
 }
 
 // ============================================================================
+// Per-material outline mask pipeline resources
+// ============================================================================
+
+void OutlineRenderer::CreateOutlineMaterialResources()
+{
+    VkDevice device = m_core->GetDevice();
+    VmaAllocator allocator = m_core->GetDeviceContext().GetVmaAllocator();
+    uint32_t framesInFlight = m_core->GetMaxFramesInFlight();
+
+    // --- Set 0 layout: binding 0 (scene UBO, vertex) + binding 14 (vert material UBO, vertex) ---
+    {
+        VkDescriptorSetLayoutBinding bindings[2]{};
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        bindings[0].descriptorCount = 1;
+        bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        bindings[1].binding = 14;
+        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        bindings[1].descriptorCount = 1;
+        bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 2;
+        layoutInfo.pBindings = bindings;
+
+        vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &m_outlineMtlSet0Layout);
+    }
+
+    // --- Empty set 1 layout placeholder ---
+    {
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 0;
+        layoutInfo.pBindings = nullptr;
+
+        vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &m_emptyDescSetLayout);
+    }
+
+    // --- Pipeline layout: [set0, emptySet1, globalsSet2] + push constants ---
+    {
+        VkPushConstantRange pushRange{};
+        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pushRange.offset = 0;
+        pushRange.size = 128; // 2 x mat4
+
+        VkDescriptorSetLayout setLayouts[3] = {m_outlineMtlSet0Layout, m_emptyDescSetLayout,
+                                                m_core->GetGlobalsDescSetLayout()};
+
+        VkPipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layoutInfo.setLayoutCount = 3;
+        layoutInfo.pSetLayouts = setLayouts;
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &pushRange;
+
+        vkCreatePipelineLayout(device, &layoutInfo, nullptr, &m_outlineMtlPipelineLayout);
+    }
+
+    // --- Descriptor pool (per-material set 0 + per-frame globals set 2) ---
+    {
+        VkDescriptorPoolSize poolSizes[2]{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount = 64 + framesInFlight; // 32 materials × 2 bindings + globals UBOs
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSizes[1].descriptorCount = framesInFlight; // instance SSBOs
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        poolInfo.maxSets = 32 + framesInFlight;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes = poolSizes;
+
+        vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_outlineMtlDescPool);
+    }
+
+    // --- Per-frame outline instance buffers (1 mat4 each, host-visible) ---
+    m_outlineInstanceBufs.resize(framesInFlight);
+    for (uint32_t i = 0; i < framesInFlight; ++i) {
+        VkBufferCreateInfo bufInfo{};
+        bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufInfo.size = sizeof(glm::mat4);
+        bufInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo allocCreateInfo{};
+        allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        allocCreateInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        allocCreateInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+        VmaAllocationInfo vmaAllocInfo{};
+        vmaCreateBuffer(allocator, &bufInfo, &allocCreateInfo, &m_outlineInstanceBufs[i].buffer,
+                        &m_outlineInstanceBufs[i].allocation, &vmaAllocInfo);
+        m_outlineInstanceBufs[i].mapped = vmaAllocInfo.pMappedData;
+
+        // Write identity as initial value
+        glm::mat4 identity(1.0f);
+        std::memcpy(m_outlineInstanceBufs[i].mapped, &identity, sizeof(glm::mat4));
+    }
+
+    // --- Per-frame outline globals descriptor sets ---
+    {
+        VkDescriptorSetLayout globalsLayout = m_core->GetGlobalsDescSetLayout();
+        std::vector<VkDescriptorSetLayout> layouts(framesInFlight, globalsLayout);
+
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = m_outlineMtlDescPool;
+        allocInfo.descriptorSetCount = framesInFlight;
+        allocInfo.pSetLayouts = layouts.data();
+
+        m_outlineGlobalsDescSets.resize(framesInFlight);
+        vkAllocateDescriptorSets(device, &allocInfo, m_outlineGlobalsDescSets.data());
+
+        for (uint32_t i = 0; i < framesInFlight; ++i) {
+            VkWriteDescriptorSet writes[2]{};
+
+            // Binding 0: globals UBO (same as engine frame i)
+            VkDescriptorBufferInfo uboBufInfo{};
+            uboBufInfo.buffer = m_core->GetGlobalsBuffer(i);
+            uboBufInfo.offset = 0;
+            uboBufInfo.range = VK_WHOLE_SIZE;
+
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = m_outlineGlobalsDescSets[i];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &uboBufInfo;
+
+            // Binding 1: outline instance buffer (1 mat4)
+            VkDescriptorBufferInfo ssboBufInfo{};
+            ssboBufInfo.buffer = m_outlineInstanceBufs[i].buffer;
+            ssboBufInfo.offset = 0;
+            ssboBufInfo.range = sizeof(glm::mat4);
+
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = m_outlineGlobalsDescSets[i];
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[1].descriptorCount = 1;
+            writes[1].pBufferInfo = &ssboBufInfo;
+
+            vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+        }
+    }
+
+    INFLOG_INFO("OutlineRenderer: per-material outline resources created");
+}
+
+VkPipeline OutlineRenderer::GetOrCreateMtlOutlinePipeline(InfMaterial *material)
+{
+    std::string key = material->GetMaterialKey();
+    if (key.empty())
+        key = material->GetName();
+
+    auto it = m_perMtlOutlinePipelines.find(key);
+    if (it != m_perMtlOutlinePipelines.end())
+        return it->second;
+
+    ShaderProgram *program = material->GetPassShaderProgram(ShaderCompileTarget::Forward);
+    if (!program)
+        return VK_NULL_HANDLE;
+
+    VkShaderModule vertModule = program->GetVertexModule();
+    VkShaderModule fragModule = m_core->GetShaderModule("outline_mask", "fragment");
+    if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE)
+        return VK_NULL_HANDLE;
+
+    VkDevice device = m_core->GetDevice();
+
+    // Shader stages
+    VkPipelineShaderStageCreateInfo vertStage{};
+    vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertStage.module = vertModule;
+    vertStage.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragStage{};
+    fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragStage.module = fragModule;
+    fragStage.pName = "main";
+
+    std::array<VkPipelineShaderStageCreateInfo, 2> stages = {vertStage, fragStage};
+
+    // Vertex input (same as scene mesh)
+    auto bindingDesc = Vertex::getBindingDescription();
+    auto attrDescs = Vertex::getAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &bindingDesc;
+    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attrDescs.size());
+    vertexInput.pVertexAttributeDescriptions = attrDescs.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    std::array<VkDynamicState, 2> dynStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynStates.size());
+    dynamicState.pDynamicStates = dynStates.data();
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo raster{};
+    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.lineWidth = 1.0f;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttach{};
+    colorBlendAttach.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttach.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo colorBlend{};
+    colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlend.attachmentCount = 1;
+    colorBlend.pAttachments = &colorBlendAttach;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
+    pipelineInfo.pStages = stages.data();
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &raster;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlend;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = m_outlineMtlPipelineLayout;
+    pipelineInfo.renderPass = m_outlineMaskRenderPass;
+    pipelineInfo.subpass = 0;
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
+        INFLOG_WARN("OutlineRenderer: Failed to create per-material outline pipeline for '", material->GetName(), "'");
+        return VK_NULL_HANDLE;
+    }
+
+    m_perMtlOutlinePipelines[key] = pipeline;
+    INFLOG_DEBUG("OutlineRenderer: Created per-material outline pipeline for '", material->GetName(), "'");
+    return pipeline;
+}
+
+VkDescriptorSet OutlineRenderer::GetOrCreateMtlOutlineDescSet(InfMaterial *material)
+{
+    std::string key = material->GetMaterialKey();
+    if (key.empty())
+        key = material->GetName();
+
+    auto it = m_perMtlOutlineDescSets.find(key);
+    if (it != m_perMtlOutlineDescSets.end())
+        return it->second;
+
+    // Get forward render data to access the vertex material UBO buffer
+    MaterialRenderData *renderData = m_core->GetMaterialPipelineManager().GetRenderData(key);
+    if (!renderData || !renderData->materialDescSet || !renderData->materialDescSet->vertexMaterialUBO ||
+        !renderData->materialDescSet->vertexMaterialUBO->IsValid()) {
+        return VK_NULL_HANDLE;
+    }
+
+    VkDevice device = m_core->GetDevice();
+
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_outlineMtlDescPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_outlineMtlSet0Layout;
+
+    VkDescriptorSet descSet = VK_NULL_HANDLE;
+    if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) {
+        INFLOG_WARN("OutlineRenderer: Failed to allocate per-material outline descriptor set");
+        return VK_NULL_HANDLE;
+    }
+
+    VkWriteDescriptorSet writes[2]{};
+
+    // Binding 0: scene UBO (same as the fixed outline mask)
+    VkDescriptorBufferInfo sceneBufInfo{};
+    sceneBufInfo.buffer = m_core->GetUniformBuffer(0);
+    sceneBufInfo.offset = 0;
+    sceneBufInfo.range = sizeof(UniformBufferObject);
+
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = descSet;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[0].descriptorCount = 1;
+    writes[0].pBufferInfo = &sceneBufInfo;
+
+    // Binding 14: vertex material UBO
+    VkDescriptorBufferInfo vertMatBufInfo{};
+    vertMatBufInfo.buffer = renderData->materialDescSet->vertexMaterialUBO->GetBuffer();
+    vertMatBufInfo.offset = 0;
+    vertMatBufInfo.range = renderData->materialDescSet->vertexMaterialUBO->GetSize();
+
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = descSet;
+    writes[1].dstBinding = 14;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[1].descriptorCount = 1;
+    writes[1].pBufferInfo = &vertMatBufInfo;
+
+    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+
+    m_perMtlOutlineDescSets[key] = descSet;
+    return descSet;
+}
+
+// ============================================================================
 // Internal: Mask Pass
 // ============================================================================
 
@@ -703,13 +1076,6 @@ void OutlineRenderer::RenderOutlineMask(VkCommandBuffer cmdBuf, const std::vecto
     scissor.extent = {w, h};
     vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
-    // Bind mask pipeline
-    vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlineMaskPipeline);
-
-    // Bind mask descriptor set (scene UBO)
-    vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlineMaskPipelineLayout, 0, 1,
-                            &m_outlineMaskDescSet, 0, nullptr);
-
     // Render the selected object
     for (const auto &dc : drawCalls) {
         if (dc.objectId != m_outlineObjectId)
@@ -739,10 +1105,51 @@ void OutlineRenderer::RenderOutlineMask(VkCommandBuffer cmdBuf, const std::vecto
         glm::mat3 normalMat3 = glm::transpose(glm::inverse(glm::mat3(dc.worldMatrix)));
         pushData.normalMat = glm::mat4(normalMat3);
 
-        vkCmdPushConstants(cmdBuf, m_outlineMaskPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants),
-                           &pushData);
+        // Check if the material has a custom vertex shader with vertex deformation
+        bool usePerMaterialPipeline = false;
+        if (dc.material) {
+            ShaderProgram *fwdProgram = dc.material->GetPassShaderProgram(ShaderCompileTarget::Forward);
+            if (fwdProgram && fwdProgram->HasVertexMaterialUBO()) {
+                VkPipeline mtlPipeline = GetOrCreateMtlOutlinePipeline(dc.material.get());
+                VkDescriptorSet mtlDescSet = GetOrCreateMtlOutlineDescSet(dc.material.get());
 
-        vkCmdDrawIndexed(cmdBuf, dc.indexCount, 1, dc.indexStart, 0, 0);
+                if (mtlPipeline != VK_NULL_HANDLE && mtlDescSet != VK_NULL_HANDLE) {
+                    // Write the object's world transform to the per-frame instance buffer
+                    uint32_t frameIdx = m_core->GetSwapchain().GetCurrentFrame() %
+                                        static_cast<uint32_t>(m_outlineInstanceBufs.size());
+                    std::memcpy(m_outlineInstanceBufs[frameIdx].mapped, &dc.worldMatrix, sizeof(glm::mat4));
+
+                    // Bind per-material pipeline
+                    vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, mtlPipeline);
+
+                    // Set 0: scene UBO + vertex material UBO
+                    vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlineMtlPipelineLayout, 0, 1,
+                                            &mtlDescSet, 0, nullptr);
+
+                    // Set 2: outline globals (globals UBO + outline instance buffer)
+                    VkDescriptorSet globalsDescSet = m_outlineGlobalsDescSets[frameIdx];
+                    vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlineMtlPipelineLayout, 2, 1,
+                                            &globalsDescSet, 0, nullptr);
+
+                    vkCmdPushConstants(cmdBuf, m_outlineMtlPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                       sizeof(PushConstants), &pushData);
+
+                    // Draw with firstInstance=0 so gl_InstanceIndex=0 reads instanceModels[0]
+                    vkCmdDrawIndexed(cmdBuf, dc.indexCount, 1, dc.indexStart, 0, 0);
+                    usePerMaterialPipeline = true;
+                }
+            }
+        }
+
+        // Fallback: original fixed outline mask pipeline (no vertex deformation)
+        if (!usePerMaterialPipeline) {
+            vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlineMaskPipeline);
+            vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlineMaskPipelineLayout, 0, 1,
+                                    &m_outlineMaskDescSet, 0, nullptr);
+            vkCmdPushConstants(cmdBuf, m_outlineMaskPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                               sizeof(PushConstants), &pushData);
+            vkCmdDrawIndexed(cmdBuf, dc.indexCount, 1, dc.indexStart, 0, 0);
+        }
     }
 
     vkCmdEndRenderPass(cmdBuf);

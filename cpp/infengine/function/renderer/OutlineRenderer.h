@@ -17,8 +17,17 @@
 #include "InfRenderStruct.h"
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
+
+// VMA forward declaration
+struct VmaAllocator_T;
+typedef struct VmaAllocator_T *VmaAllocator;
+struct VmaAllocation_T;
+typedef struct VmaAllocation_T *VmaAllocation;
 
 namespace infengine
 {
@@ -26,6 +35,8 @@ namespace infengine
 // Forward declarations
 class InfVkCoreModular;
 class SceneRenderTarget;
+class InfMaterial;
+class ShaderProgram;
 
 /**
  * @brief Self-contained post-process selection outline renderer.
@@ -144,6 +155,14 @@ class OutlineRenderer
     void CreateOutlinePipelines();
 
     // ========================================================================
+    // Per-material outline pipeline support
+    // ========================================================================
+
+    void CreateOutlineMaterialResources();
+    VkPipeline GetOrCreateMtlOutlinePipeline(InfMaterial *material);
+    VkDescriptorSet GetOrCreateMtlOutlineDescSet(InfMaterial *material);
+
+    // ========================================================================
     // Internal Rendering
     // ========================================================================
 
@@ -183,6 +202,34 @@ class OutlineRenderer
 
     // Shared descriptor pool for outline
     VkDescriptorPool m_outlineDescPool = VK_NULL_HANDLE;
+
+    // ========================================================================
+    // Per-material outline mask pipeline resources
+    // ========================================================================
+
+    // Pipeline layout: set 0 (scene UBO + vert mat UBO), set 1 (empty), set 2 (globals + instance SSBO)
+    VkPipelineLayout m_outlineMtlPipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_outlineMtlSet0Layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_emptyDescSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_outlineMtlDescPool = VK_NULL_HANDLE;
+
+    // Per-frame single-instance buffer (1 mat4, for outline object transform)
+    struct OutlineInstanceBuf
+    {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        void *mapped = nullptr;
+    };
+    std::vector<OutlineInstanceBuf> m_outlineInstanceBufs;
+
+    // Per-frame outline globals descriptor sets (binding 0 = globals UBO, binding 1 = instance buf)
+    std::vector<VkDescriptorSet> m_outlineGlobalsDescSets;
+
+    // Cached per-material outline mask pipelines (key = material name)
+    std::unordered_map<std::string, VkPipeline> m_perMtlOutlinePipelines;
+
+    // Cached per-material set 0 descriptor sets (scene UBO + vertex material UBO)
+    std::unordered_map<std::string, VkDescriptorSet> m_perMtlOutlineDescSets;
 
     // ========================================================================
     // Outline Parameters
