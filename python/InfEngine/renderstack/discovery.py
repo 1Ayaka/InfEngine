@@ -106,7 +106,7 @@ def _ensure_user_scripts_loaded(*keywords: str) -> None:
         rel = os.path.relpath(dirpath, project_root)
         parts = rel.split(os.sep)
         if any(
-            p.startswith(".") or p in ("__pycache__", "build", "dist", ".venv", "venv")
+            p.startswith(".") or p in ("__pycache__", "build", "dist", ".venv", "venv", ".runtime")
             for p in parts
         ):
             continue

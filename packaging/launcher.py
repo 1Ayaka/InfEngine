@@ -124,7 +124,7 @@ class GameEngineLauncher(QMainWindow):
             sys.exit(self.app.exec())
 
     def _bootstrap_python_runtime(self):
-        if self.runtime_manager.has_runtime() and self.runtime_manager.has_venv_template():
+        if self.runtime_manager.has_runtime():
             self.installs_view.refresh()
             return
 
@@ -133,8 +133,8 @@ class GameEngineLauncher(QMainWindow):
             "Python 3.12 Setup",
             "InfEngine Hub needs Python 3.12 to create and launch projects.\n\n"
             "The recommended path is to install InfEngine Hub through the installer. The installer or standalone Hub will\n"
-            "download the matching full Python 3.12 installer for this machine when needed, install it under\n"
-            "C:\\Users\\Public\\InfEngineHub, and then prepare a reusable venv template there.",
+            "download the matching full Python 3.12 installer for this machine when needed and install it under\n"
+            "C:\\Users\\Public\\InfEngineHub.  Each project then receives its own full copy of the runtime.",
         )
 
         dlg = PythonRuntimeInstallDialog(self.runtime_manager, self)

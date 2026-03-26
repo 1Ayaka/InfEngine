@@ -167,15 +167,15 @@ The Hub is a standalone launcher (built with PySide6 + PyInstaller) for managing
 - **Project list** — create, open, and manage projects
 - **Engine version management** — download engine wheels from GitHub Releases
 - **Python runtime management** — auto-installs Python 3.12 embeddable
-- **Virtual environment templates** — pre-built venvs for fast project creation
+- **Per-project Python runtime** — each project receives a full Python copy
 
 ### Installing the Hub
 
 The Hub ships as a one-click installer (`InfEngineHubInstaller.exe`) that:
 
 1. Extracts the Hub application to your chosen directory
-2. Installs the Python 3.12 embeddable runtime (without downloading when offline assets are prebundled)
-3. Creates a reusable venv template with pip
+2. Installs the Python 3.12 runtime (without downloading when offline assets are prebundled)
+3. Prepares the shared runtime with build packages (nuitka, Pillow, etc.)
 4. Registers in Windows Add/Remove Programs
 5. Creates a Start Menu shortcut
 

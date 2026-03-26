@@ -150,7 +150,7 @@ def open_file_with_system(file_path: str, project_root: str = ""):
 
     For ``.py``, ``.vert``, ``.frag``, ``.glsl``, ``.hlsl``, ``.json``,
     ``.txt``, and ``.md`` files, open in VS Code with the *project_root*
-    as the workspace folder — so that the project's ``.venv`` Python
+    as the workspace folder — so that the project's Python runtime
     interpreter and type stubs are automatically picked up by Pylance.
     """
     import subprocess

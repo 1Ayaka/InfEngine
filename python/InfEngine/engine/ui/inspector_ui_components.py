@@ -54,7 +54,7 @@ _font_cache = None
 _font_cache_time = 0.0
 _FONT_CACHE_TTL = 2.0  # seconds
 
-_FONT_EXCLUDE_DIRS = {'.venv', '__pycache__', 'build', '.git', 'node_modules', 'external'}
+_FONT_EXCLUDE_DIRS = {'.venv', '.runtime', '__pycache__', 'build', '.git', 'node_modules', 'external'}
 
 
 def _get_project_font_options():

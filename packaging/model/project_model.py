@@ -131,13 +131,13 @@ class ProjectModel:
             from version_manager import VersionManager
             VersionManager.write_project_version(project_dir, engine_version)
 
-        # ── Create .venv and install InfEngine ──────────────────────────
-        venv_path = os.path.join(project_dir, ".venv")
+        # ── Create project Python runtime and install InfEngine ────────
+        runtime_path = os.path.join(project_dir, ".runtime", "python312")
         try:
-            self._create_project_venv(project_dir)
-            self._install_infengine_in_venv(project_dir, engine_version)
+            self._create_project_runtime(project_dir)
+            self._install_infengine_in_runtime(project_dir, engine_version)
         except Exception:
-            shutil.rmtree(venv_path, ignore_errors=True)
+            shutil.rmtree(os.path.join(project_dir, ".runtime"), ignore_errors=True)
             raise
 
         # ── Create VS Code workspace configuration ─────────────────────
@@ -148,35 +148,47 @@ class ProjectModel:
     # -----------------------------------------------------------------
 
     @staticmethod
-    def _get_venv_python(project_dir: str) -> str:
-        """Return the Python executable inside the project's .venv."""
+    def _get_project_python(project_dir: str) -> str:
+        """Return the Python executable for the project.
+
+        In frozen (packaged Hub) mode, each project owns a full Python copy
+        under .runtime/python312/.  In dev mode, we use a classic .venv.
+        """
+        if is_frozen():
+            runtime_dir = os.path.join(project_dir, ".runtime", "python312")
+            if sys.platform == "win32":
+                return os.path.join(runtime_dir, "python.exe")
+            return os.path.join(runtime_dir, "bin", "python")
+        # Dev mode: classic .venv
         venv_dir = os.path.join(project_dir, ".venv")
         if sys.platform == "win32":
             return os.path.join(venv_dir, "Scripts", "python.exe")
         return os.path.join(venv_dir, "bin", "python")
 
-    def _create_project_venv(self, project_dir: str) -> None:
-        venv_path = os.path.join(project_dir, ".venv")
+    def _create_project_runtime(self, project_dir: str) -> None:
         if is_frozen():
+            runtime_path = os.path.join(project_dir, ".runtime", "python312")
             try:
-                self.runtime_manager.create_venv(venv_path)
+                self.runtime_manager.create_project_runtime(runtime_path)
             except PythonRuntimeError as exc:
                 raise RuntimeError(str(exc)) from exc
             return
 
+        # Dev mode: create a classic .venv
+        venv_path = os.path.join(project_dir, ".venv")
         _run_hidden([sys.executable, "-m", "venv", "--copies", venv_path], timeout=600)
 
-    def _install_infengine_in_venv(self, project_dir: str, engine_version: str = ""):
-        """Install the InfEngine wheel into the project's .venv.
+    def _install_infengine_in_runtime(self, project_dir: str, engine_version: str = ""):
+        """Install the InfEngine wheel into the project's Python environment.
 
-        In frozen (packaged Hub) mode, the wheel comes from the version
-        manager cache (~/.infengine/versions/<ver>/).
-        In dev mode, we use a local prebuilt wheel from dist/.
+        In frozen (packaged Hub) mode, the wheel is installed into the project's
+        full Python copy at .runtime/python312/.
+        In dev mode, the wheel is installed into the classic .venv.
 
         Source builds are intentionally blocked here so project creation never
         falls back to a local C++ compile.
         """
-        venv_python = ProjectModel._get_venv_python(project_dir)
+        venv_python = ProjectModel._get_project_python(project_dir)
         if not os.path.isfile(venv_python):
             raise RuntimeError(
                 f"venv python not found at {venv_python}.\n"
@@ -224,9 +236,9 @@ class ProjectModel:
         os.makedirs(vscode_dir, exist_ok=True)
 
         # ── settings.json ───────────────────────────────────────────────
-        venv_python = ProjectModel._get_venv_python(project_dir)
+        project_python = ProjectModel._get_project_python(project_dir)
         settings = {
-            "python.defaultInterpreterPath": venv_python,
+            "python.defaultInterpreterPath": project_python,
             "python.analysis.typeCheckingMode": "basic",
             "python.analysis.autoImportCompletions": True,
             "python.analysis.diagnosticSeverityOverrides": {
@@ -238,6 +250,7 @@ class ProjectModel:
                 "**/*.pyc": True,
                 "**/*.meta": True,
                 ".venv": True,
+                ".runtime": True,
                 "Library": True,
                 "Logs": True,
                 "ProjectSettings": True,
@@ -259,15 +272,27 @@ class ProjectModel:
             json.dump(extensions, f, indent=4, ensure_ascii=False)
 
         # ── pyrightconfig.json (at project root) ────────────────────────
-        pyright_config = {
-            "venvPath": ".",
-            "venv": ".venv",
-            "pythonVersion": "3.12",
-            "typeCheckingMode": "basic",
-            "reportMissingModuleSource": False,
-            "reportWildcardImportFromLibrary": False,
-            "include": ["Assets"],
-        }
+        # In frozen mode, point Pyright directly at the project runtime Python;
+        # in dev mode, use the classic venvPath/venv convention.
+        if is_frozen():
+            pyright_config = {
+                "pythonPath": ProjectModel._get_project_python(project_dir),
+                "pythonVersion": "3.12",
+                "typeCheckingMode": "basic",
+                "reportMissingModuleSource": False,
+                "reportWildcardImportFromLibrary": False,
+                "include": ["Assets"],
+            }
+        else:
+            pyright_config = {
+                "venvPath": ".",
+                "venv": ".venv",
+                "pythonVersion": "3.12",
+                "typeCheckingMode": "basic",
+                "reportMissingModuleSource": False,
+                "reportWildcardImportFromLibrary": False,
+                "include": ["Assets"],
+            }
         pyright_path = os.path.join(project_dir, "pyrightconfig.json")
         with open(pyright_path, "w", encoding="utf-8") as f:
             json.dump(pyright_config, f, indent=4, ensure_ascii=False)

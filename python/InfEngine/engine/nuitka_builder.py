@@ -116,16 +116,13 @@ def _dedupe_paths(paths: List[str]) -> List[str]:
 
 
 def _resolve_builder_python() -> str:
-    explicit = os.environ.get("INFENGINE_BUILDER_PYTHON", "").strip()
-    if explicit and _is_valid_builder_python(explicit):
-        return explicit
-
     if _is_valid_builder_python(sys.executable):
         return sys.executable
 
     raise RuntimeError(
         "Nuitka builds must run from a non-embeddable Python 3.12 environment.\n"
-        "In the packaged Hub workflow, open the project through its generated .venv and build from there."
+        "In the packaged Hub workflow, each project owns a full Python copy "
+        "under .runtime/python312/ — open the project through its runtime and build from there."
     )
 
 

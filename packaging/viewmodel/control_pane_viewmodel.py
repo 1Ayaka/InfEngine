@@ -32,7 +32,7 @@ class CustomProgressDialog(QDialog):
         self.messages = [
             "Setting up project structure...",
             "Copying engine libraries...",
-            "Configuring virtual environment...",
+            "Setting up Python runtime...",
             "Preparing asset folders...",
             "Almost there...",
         ]
@@ -93,14 +93,14 @@ class ControlPaneViewModel:
 
         # Determine Python interpreter based on mode
         if is_frozen():
-            # Packaged Hub → always use the project's .venv
-            python_exe = ProjectModel._get_venv_python(project_path)
+            # Packaged Hub → use the project's full Python runtime copy
+            python_exe = ProjectModel._get_project_python(project_path)
             if not os.path.isfile(python_exe):
                 QMessageBox.critical(
                     parent,
-                    "Missing .venv",
-                    f"Project virtual environment not found at:\n"
-                    f"{os.path.join(project_path, '.venv')}\n\n"
+                    "Missing Runtime",
+                    f"Project Python runtime not found at:\n"
+                    f"{os.path.join(project_path, '.runtime', 'python312')}\n\n"
                     "Please recreate the project or reinstall the engine version.",
                 )
                 return
@@ -118,12 +118,6 @@ class ControlPaneViewModel:
         from splash_screen import EngineSplashScreen
         from hub_resources import ICON_PATH
 
-        extra_env = None
-        if is_frozen() and self.runtime_manager is not None:
-            builder_python = self.runtime_manager.get_runtime_path()
-            if builder_python and os.path.isfile(builder_python):
-                extra_env = {"INFENGINE_BUILDER_PYTHON": builder_python}
-
         splash = EngineSplashScreen(ICON_PATH, project_name, parent=None)
         splash.show()
         splash.launch(
@@ -131,7 +125,6 @@ class ControlPaneViewModel:
             script,
             project_path,
             detached=is_frozen(),
-            extra_env=extra_env,
         )
         self._splash = splash
 

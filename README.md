@@ -202,7 +202,7 @@ Use this when you want the Hub to behave like a real installed application:
 - copy files into a proper install directory
 - download the correct Python 3.12 installer for the current machine architecture during setup
 - install the Hub's private Python runtime into `InfEngineHubData/python312`
-- prepare a reusable venv template during installation instead of waiting for first project creation
+- each new project receives its own full copy of this runtime
 
 ### Installer dependency
 
@@ -219,7 +219,7 @@ The installer itself is now a graphical application and performs these steps dir
 - detects the host architecture
 - downloads the matching Python 3.12 installer
 - installs Python into the Hub's private data directory
-- prepares a reusable venv template for later project creation
+- new projects receive their own full copy of the runtime
 
 ### Installer note
 
@@ -257,11 +257,10 @@ The Hub now distinguishes clearly between development and end-user environments.
 
 - launched from the packaged application
 - uses a private Python 3.12 runtime under `InfEngineHubData/`
-- prepares a reusable venv template once
-- copies that template for new projects to reduce project creation time
-- installs the selected InfEngine version into each project after the template is copied
+- copies the full Python runtime into each new project at `.runtime/python312/`
+- installs the selected InfEngine version into each project's runtime
 
-This means the shared template contains Python only. It does not preinstall a specific InfEngine wheel, because users choose the engine version per project.
+This means each project owns a complete, self-contained Python copy. It does not share a runtime with other projects.
 
 ---
 

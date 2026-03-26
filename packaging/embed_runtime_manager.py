@@ -18,19 +18,15 @@ from hub_utils import get_bundle_dir, get_hub_data_dir, is_frozen
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _RUNTIME_ROOT = Path.home() / ".infengine" / "runtime"
 _PUBLIC_RUNTIME_ROOT = Path("C:/Users/Public/InfEngineHub") if sys.platform == "win32" else _RUNTIME_ROOT
-_TEMPLATE_BUILDER_PACKAGES = [
+_RUNTIME_PACKAGES = [
+    "pip",
+    "setuptools",
+    "wheel",
     "nuitka",
     "ordered-set",
     "Pillow",
     "imageio",
     "av",
-]
-_RUNTIME_PACKAGES = [
-    "pip",
-    "setuptools",
-    "wheel",
-    "virtualenv",
-    *_TEMPLATE_BUILDER_PACKAGES,
 ]
 
 
@@ -351,26 +347,8 @@ class PythonRuntimeManager:
         bundle_name = _runtime_bundle_name()
         return [os.path.join(path, bundle_name) for path in self.bundled_runtime_dirs()]
 
-    def venv_template_root(self) -> str:
-        return os.path.join(self.installed_runtime_dir(), "venv_template")
-
-    def venv_template_python(self) -> str:
-        if sys.platform == "win32":
-            return os.path.join(self.venv_template_root(), "Scripts", "python.exe")
-        return os.path.join(self.venv_template_root(), "bin", "python")
-
     def has_runtime(self) -> bool:
         return bool(self.get_runtime_path())
-
-    def has_venv_template(self) -> bool:
-        python_exe = self.venv_template_python()
-        return self._is_valid_venv(self.venv_template_root()) and self._has_modules(
-            python_exe,
-            "nuitka",
-            "PIL",
-            "imageio",
-            "av",
-        )
 
     def get_runtime_path(self) -> Optional[str]:
         roots = [self.private_runtime_root()]
@@ -399,14 +377,9 @@ class PythonRuntimeManager:
                         "The installed managed Python 3.12 runtime is missing CPython build support files.\n"
                         "Please reinstall InfEngine Hub so the runtime can be prepared during installation."
                     )
-                if not self._has_modules(python_exe, "pip", "virtualenv", "nuitka", "PIL", "imageio", "av"):
+                if not self._has_modules(python_exe, "pip", "nuitka", "PIL", "imageio", "av"):
                     raise PythonRuntimeError(
                         "The installed managed Python 3.12 runtime is missing required support packages.\n"
-                        "Please reinstall InfEngine Hub so the runtime can be prepared during installation."
-                    )
-                if not self.has_venv_template():
-                    raise PythonRuntimeError(
-                        "The installed managed Python 3.12 runtime is missing the reusable venv template.\n"
                         "Please reinstall InfEngine Hub so the runtime can be prepared during installation."
                     )
                 return python_exe
@@ -424,34 +397,40 @@ class PythonRuntimeManager:
 
             self._prepare_managed_runtime(python_exe, on_status=on_status)
 
-        self._ensure_venv_template(python_exe, on_status=on_status)
         return python_exe
 
-    def create_venv(self, venv_path: str) -> str:
-        python_exe = self.ensure_runtime()
-        if not self.has_venv_template():
-            self._ensure_venv_template(python_exe)
+    def create_project_runtime(self, dest_path: str) -> str:
+        """Copy the full managed Python runtime to *dest_path* for a project.
 
+        Each project owns its own complete Python copy so there is no need
+        for virtual-environment indirection or pyvenv.cfg.
+        """
+        self.ensure_runtime()
+        source = self.private_runtime_root()
+        if not os.path.isdir(source):
+            raise PythonRuntimeError(
+                "The managed Python 3.12 runtime directory does not exist.\n"
+                f"Expected at: {source}"
+            )
+
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         try:
-            shutil.copytree(self.venv_template_root(), venv_path)
+            shutil.copytree(source, dest_path)
         except OSError as exc:
             raise PythonRuntimeError(
-                f"Failed to copy the prepared virtual environment template to {venv_path}.\n{exc}"
+                f"Failed to copy the managed Python runtime to {dest_path}.\n{exc}"
             ) from exc
 
-        self._rewrite_pyvenv_cfg(venv_path, python_exe)
-        self._seed_venv_build_support(venv_path, os.path.dirname(python_exe))
-
         if sys.platform == "win32":
-            venv_python = os.path.join(venv_path, "Scripts", "python.exe")
+            project_python = os.path.join(dest_path, "python.exe")
         else:
-            venv_python = os.path.join(venv_path, "bin", "python")
+            project_python = os.path.join(dest_path, "bin", "python")
 
-        if not os.path.isfile(venv_python):
+        if not os.path.isfile(project_python):
             raise PythonRuntimeError(
-                f"Virtual environment creation finished, but python.exe was not found at {venv_python}."
+                f"Runtime copy finished, but python.exe was not found at {project_python}."
             )
-        return venv_python
+        return project_python
 
     def _provision_managed_runtime(self, *, on_status: Optional[Callable[[str], None]] = None) -> str:
         bundled_python = self._seed_runtime_from_bundle(on_status=on_status)
@@ -671,18 +650,6 @@ class PythonRuntimeManager:
             "Reinstall InfEngine Hub or rebuild the bundled runtime so these files are available."
         )
 
-    def _seed_venv_build_support(self, venv_root: str, runtime_root: str) -> None:
-        if _has_build_support(venv_root):
-            return
-        if not _has_build_support(runtime_root):
-            raise PythonRuntimeError(
-                "Managed Python 3.12 is missing CPython build support files required for Nuitka builds."
-            )
-        if not _copy_build_support(runtime_root, venv_root) or not _has_build_support(venv_root):
-            raise PythonRuntimeError(
-                f"Failed to copy CPython build support files into the project virtual environment at {venv_root}."
-            )
-
     def _ensure_pip(self, python_exe: str, *, on_status: Optional[Callable[[str], None]] = None) -> None:
         completed = _run_command([python_exe, "-m", "pip", "--version"], timeout=60, raise_on_error=False)
         if completed.returncode == 0:
@@ -702,7 +669,7 @@ class PythonRuntimeManager:
             )
 
     def _ensure_runtime_packages(self, python_exe: str, *, on_status: Optional[Callable[[str], None]] = None) -> None:
-        if self._has_modules(python_exe, "pip", "virtualenv", "nuitka", "PIL", "imageio", "av"):
+        if self._has_modules(python_exe, "pip", "nuitka", "PIL", "imageio", "av"):
             return
 
         _emit_status(on_status, "Installing managed runtime support packages...")
@@ -726,7 +693,7 @@ class PythonRuntimeManager:
                 f"{(completed.stderr or completed.stdout or '').strip()}"
             )
 
-        if not self._has_modules(python_exe, "pip", "virtualenv", "nuitka", "PIL", "imageio", "av"):
+        if not self._has_modules(python_exe, "pip", "nuitka", "PIL", "imageio", "av"):
             raise PythonRuntimeError(
                 "Managed Python runtime is still missing required support packages after installation."
             )
@@ -741,107 +708,3 @@ class PythonRuntimeManager:
             raise_on_error=False,
         )
         return completed.returncode == 0 and (completed.stdout or "").strip() == "1"
-
-    def _create_runtime_env(self, python_exe: str, target_root: str) -> None:
-        commands: list[list[str]] = []
-        if self._has_modules(python_exe, "virtualenv"):
-            commands.append([python_exe, "-m", "virtualenv", "--always-copy", target_root])
-        if not _is_embedded_root(os.path.dirname(python_exe)):
-            commands.append([python_exe, "-m", "venv", "--copies", target_root])
-
-        if not commands:
-            raise PythonRuntimeError(
-                "The managed Python runtime cannot create virtual environments because virtualenv is unavailable."
-            )
-
-        last_error = ""
-        for args in commands:
-            completed = _run_command(args, timeout=600, raise_on_error=False)
-            if completed.returncode == 0:
-                return
-            last_error = (completed.stderr or completed.stdout or "").strip()
-
-        raise PythonRuntimeError(
-            "Failed to prepare the reusable virtual environment template.\n"
-            f"{last_error}"
-        )
-
-    def _install_template_packages(
-        self,
-        venv_root: str,
-        runtime_root: str,
-        *,
-        on_status: Optional[Callable[[str], None]] = None,
-    ) -> None:
-        if sys.platform == "win32":
-            venv_python = os.path.join(venv_root, "Scripts", "python.exe")
-            venv_site_packages = os.path.join(venv_root, "Lib", "site-packages")
-        else:
-            venv_python = os.path.join(venv_root, "bin", "python")
-            version = self._get_python_version(venv_python)
-            major_minor = ".".join(version.split(".")[:2])
-            venv_site_packages = os.path.join(venv_root, "lib", f"python{major_minor}", "site-packages")
-
-        runtime_site_packages = _site_packages_root(runtime_root)
-
-        if not os.path.isfile(venv_python):
-            raise PythonRuntimeError(
-                f"Virtual environment template python was not found at {venv_python}."
-            )
-
-        _emit_status(on_status, "Seeding build packages into the reusable venv template...")
-        _copy_directory_contents(runtime_site_packages, venv_site_packages)
-
-        if not self._has_modules(venv_python, "nuitka", "PIL", "imageio", "av"):
-            raise PythonRuntimeError(
-                "The reusable venv template is missing required build packages after installation."
-            )
-
-    def _ensure_venv_template(self, python_exe: str, *, on_status: Optional[Callable[[str], None]] = None) -> None:
-        if self.has_venv_template():
-            return
-
-        template_root = self.venv_template_root()
-        os.makedirs(os.path.dirname(template_root), exist_ok=True)
-        temp_root = template_root + ".tmp"
-        shutil.rmtree(temp_root, ignore_errors=True)
-        shutil.rmtree(template_root, ignore_errors=True)
-
-        _emit_status(on_status, "Preparing reusable virtual environment template...")
-        self._create_runtime_env(python_exe, temp_root)
-        self._install_template_packages(temp_root, os.path.dirname(python_exe), on_status=on_status)
-        self._rewrite_pyvenv_cfg(temp_root, python_exe)
-        os.replace(temp_root, template_root)
-
-    def _rewrite_pyvenv_cfg(self, venv_root: str, base_python: str) -> None:
-        cfg_path = os.path.join(venv_root, "pyvenv.cfg")
-        base_home = os.path.dirname(base_python)
-        version = self._get_python_version(base_python)
-        command = f'"{base_python}" -m virtualenv --always-copy "{venv_root}"'
-
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            f.write(f"home = {base_home}\n")
-            f.write("include-system-site-packages = false\n")
-            f.write(f"version = {version}\n")
-            f.write(f"executable = {base_python}\n")
-            f.write(f"command = {command}\n")
-
-    def _get_python_version(self, python_exe: str) -> str:
-        completed = _run_command(
-            [python_exe, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"],
-            timeout=20,
-            raise_on_error=False,
-        )
-        if completed.returncode != 0:
-            raise PythonRuntimeError(
-                f"Failed to query the Python version for {python_exe}.\n{(completed.stderr or completed.stdout or '').strip()}"
-            )
-        return (completed.stdout or "").strip()
-
-    def _is_valid_venv(self, venv_root: str) -> bool:
-        cfg_path = os.path.join(venv_root, "pyvenv.cfg")
-        if sys.platform == "win32":
-            venv_python = os.path.join(venv_root, "Scripts", "python.exe")
-        else:
-            venv_python = os.path.join(venv_root, "bin", "python")
-        return os.path.isfile(cfg_path) and os.path.isfile(venv_python)

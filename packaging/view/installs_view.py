@@ -139,8 +139,8 @@ class PythonRuntimeInstallDialog(QDialog):
         layout.addWidget(title)
 
         detail = QLabel(
-            "A background setup process is preparing a managed full Python 3.12 runtime and a reusable "
-            "venv template under C:\\Users\\Public\\InfEngineHub. New projects can then clone that template directly. "
+            "A background setup process is preparing a managed full Python 3.12 runtime "
+            "under C:\\Users\\Public\\InfEngineHub. Each new project will receive its own copy of this runtime. "
             "This window will close automatically when installation finishes."
         )
         detail.setWordWrap(True)
@@ -463,16 +463,13 @@ class InstallsView(QWidget):
         self._runtime_card.show()
         runtime_path = self._runtime_manager.get_runtime_path()
         if runtime_path:
-            if self._runtime_manager.has_venv_template():
-                self._runtime_status.setText("Python 3.12 runtime and venv template are ready")
-            else:
-                self._runtime_status.setText("Python 3.12 runtime is ready; venv template will be prepared on first use")
+            self._runtime_status.setText("Python 3.12 runtime is ready")
             self._runtime_path.setText(runtime_path)
             self._runtime_button.setText("Reinstall Python 3.12")
         else:
             self._runtime_status.setText("Python 3.12 runtime is missing")
             self._runtime_path.setText(
-                "The installed Hub is expected to prepare a managed full Python 3.12 runtime under C:\\Users\\Public\\InfEngineHub during setup. If it is still missing, Hub will download the matching Python 3.12 installer for this machine and prepare a reusable venv template there."
+                "The installed Hub is expected to prepare a managed full Python 3.12 runtime under C:\\Users\\Public\\InfEngineHub during setup. If it is still missing, Hub will download the matching Python 3.12 installer for this machine."
             )
             self._runtime_button.setText("Install Python 3.12")
 
