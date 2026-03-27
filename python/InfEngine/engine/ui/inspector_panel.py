@@ -15,7 +15,7 @@ from enum import Enum, auto
 from InfEngine.lib import InfGUIContext, TextureLoader
 from InfEngine.engine.i18n import t
 from InfEngine.components.component import InfComponent
-from InfEngine.resources import component_icons_dir
+import InfEngine.resources as _resources
 from InfEngine.core.asset_types import asset_category_from_extension
 from .editor_panel import EditorPanel
 from .panel_registry import editor_panel
@@ -145,10 +145,10 @@ class InspectorPanel(EditorPanel):
         """Lazily load component icon PNGs from resources/icons/components/."""
         if self.__comp_icons_loaded:
             return
-        if not os.path.isdir(component_icons_dir):
+        if not os.path.isdir(_resources.component_icons_dir):
             self.__comp_icons_loaded = True
             return
-        for fname in os.listdir(component_icons_dir):
+        for fname in os.listdir(_resources.component_icons_dir):
             if not fname.startswith("component_") or not fname.endswith(".png"):
                 continue
             key = fname[len("component_"):-len(".png")]  # e.g. "camera"
@@ -156,7 +156,7 @@ class InspectorPanel(EditorPanel):
             if native.has_imgui_texture(tex_name):
                 self.__comp_icon_cache[key] = native.get_imgui_texture_id(tex_name)
                 continue
-            icon_path = os.path.join(component_icons_dir, fname)
+            icon_path = os.path.join(_resources.component_icons_dir, fname)
             tex_data = TextureLoader.load_from_file(icon_path)
             if tex_data and tex_data.is_valid():
                 pixels = tex_data.get_pixels_list()
@@ -936,6 +936,7 @@ class InspectorPanel(EditorPanel):
         self._undo_tracker.track(
             f"material:{_mat_guid}",
             _mat_snapshot, _mat_restore, "Edit Material",
+            marks_dirty=False,
         )
 
         # Sync shader annotations (both vertex + fragment properties)

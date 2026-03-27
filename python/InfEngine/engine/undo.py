@@ -1501,8 +1501,10 @@ class InspectorSnapshotCommand(UndoCommand):
     def __init__(self, target_key: str, old_snapshot: str,
                  new_snapshot: str,
                  restore_fn: Callable[[str], None],
-                 description: str = ""):
+                 description: str = "",
+                 marks_dirty: bool = True):
         super().__init__(description or "Inspector Edit")
+        self.marks_dirty = marks_dirty
         self._target_key = target_key
         self._old_snapshot = old_snapshot
         self._new_snapshot = new_snapshot
@@ -1531,17 +1533,19 @@ class InspectorSnapshotCommand(UndoCommand):
 class _TrackedEntry:
     """Internal bookkeeping for a single tracked target within a frame."""
     __slots__ = ('pre_snapshot', 'snapshot_fn', 'restore_fn', 'description',
-                 'active')
+                 'active', 'marks_dirty')
 
     def __init__(self, pre_snapshot: str,
                  snapshot_fn: Callable[[], str],
                  restore_fn: Callable[[str], None],
-                 description: str):
+                 description: str,
+                 marks_dirty: bool = True):
         self.pre_snapshot = pre_snapshot
         self.snapshot_fn = snapshot_fn
         self.restore_fn = restore_fn
         self.description = description
         self.active = True
+        self.marks_dirty = marks_dirty
 
 
 class InspectorUndoTracker:
@@ -1595,7 +1599,8 @@ class InspectorUndoTracker:
 
     def track(self, key: str, snapshot_fn: Callable[[], str],
               restore_fn: Callable[[str], None],
-              description: str = "") -> None:
+              description: str = "",
+              marks_dirty: bool = True) -> None:
         """Register a target for change tracking.
 
         Args:
@@ -1603,6 +1608,9 @@ class InspectorUndoTracker:
             snapshot_fn: Returns the target's serialized state.
             restore_fn: Restores the target from a serialized state.
             description: Human-readable label for the undo menu entry.
+            marks_dirty: Whether changes to this target should mark the
+                scene as dirty.  ``False`` for asset edits (materials)
+                that are saved to their own files.
         """
         existing = self._entries.get(key)
         if existing is not None:
@@ -1618,7 +1626,7 @@ class InspectorUndoTracker:
         except Exception:
             return
         self._entries[key] = _TrackedEntry(
-            pre, snapshot_fn, restore_fn, description)
+            pre, snapshot_fn, restore_fn, description, marks_dirty)
 
     def end_frame(self, any_item_active: bool | None = None) -> None:
         """Compare pre/post snapshots and record undo for any changes.
@@ -1662,6 +1670,7 @@ class InspectorUndoTracker:
                 cmd = InspectorSnapshotCommand(
                     key, entry.pre_snapshot, post,
                     entry.restore_fn, entry.description,
+                    marks_dirty=entry.marks_dirty,
                 )
                 mgr.record(cmd)
                 # Update pre-snapshot so next frame compares against

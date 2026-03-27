@@ -48,6 +48,8 @@ void RegisterAssetDatabaseBindings(py::module_ &m)
         .def("initialize", &AssetDatabase::Initialize, py::arg("project_root"),
              "Initialize asset database with project root")
         .def("refresh", &AssetDatabase::Refresh, "Refresh assets by scanning Assets folder")
+        .def("add_scan_root", &AssetDatabase::AddScanRoot, py::arg("path"),
+             "Add an extra directory to scan during Refresh (e.g. Library/Resources)")
         .def("import_asset", &AssetDatabase::ImportAsset, py::arg("path"), "Import a single asset")
         .def("delete_asset", &AssetDatabase::DeleteAsset, py::arg("path"), "Delete asset and its meta")
         .def("move_asset", &AssetDatabase::MoveAsset, py::arg("old_path"), py::arg("new_path"),

@@ -108,7 +108,8 @@ def get_shader_file_path(shader_id: str, ext: str) -> str:
     search_roots = []
     if project_root:
         search_roots.append(os.path.join(project_root, "Assets"))
-    builtin_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "resources", "shaders"))
+    from InfEngine.resources import resources_path
+    builtin_root = os.path.join(resources_path, "shaders")
     search_roots.append(builtin_root)
 
     for root in search_roots:
@@ -156,7 +157,8 @@ def get_shader_candidates(ext: str, cache: dict = None):
     if project_root:
         search_roots.append(os.path.join(project_root, "Assets"))
 
-    builtin_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "resources", "shaders"))
+    from InfEngine.resources import resources_path
+    builtin_root = os.path.join(resources_path, "shaders")
     search_roots.append(builtin_root)
 
     for root in search_roots:

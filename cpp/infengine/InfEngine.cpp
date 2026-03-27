@@ -246,6 +246,11 @@ void InfEngine::InitRenderer(int width, int height, const std::string &projectPa
         // Populate AssetDatabase's meta-loader table from registered loaders
         registry.PopulateAssetDatabaseLoaders();
 
+        // Register the builtin resource directory as an extra scan root
+        // so that Library/Resources assets (materials, etc.) get GUIDs.
+        if (!builtinResourcePath.empty())
+            registry.GetAssetDatabase()->AddScanRoot(builtinResourcePath);
+
         registry.GetAssetDatabase()->Refresh();
 
         // ── Load and register shaders via AssetRegistry ─────────────

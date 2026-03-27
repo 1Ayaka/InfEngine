@@ -11,7 +11,7 @@ import shutil
 import threading
 from InfEngine.lib import InfGUIContext, TextureLoader, InputManager
 from InfEngine.engine.i18n import t
-from InfEngine.resources import file_type_icons_dir
+import InfEngine.resources as _resources
 from .editor_panel import EditorPanel
 from .panel_registry import editor_panel
 from .theme import Theme, ImGuiCol, ImGuiStyleVar
@@ -660,7 +660,7 @@ class ProjectPanel(EditorPanel):
                 self.__type_icon_cache[icon_key] = native.get_imgui_texture_id(tex_name)
                 continue
 
-            icon_path = os.path.join(file_type_icons_dir, f"{icon_key}.png")
+            icon_path = os.path.join(_resources.file_type_icons_dir, f"{icon_key}.png")
             if not os.path.isfile(icon_path):
                 continue  # user hasn't added this icon yet, will fall back to text
 

@@ -40,6 +40,9 @@ class AssetDatabase
     /// @brief Refresh all assets by scanning the Assets folder
     void Refresh();
 
+    /// @brief Add an extra directory to scan during Refresh (e.g. Library/Resources).
+    void AddScanRoot(const std::string &path);
+
     /// @brief Import an asset and create/update its meta.
     /// Runs the appropriate AssetImporter to scan dependencies.
     /// @return GUID of the asset, empty if failed
@@ -163,6 +166,7 @@ class AssetDatabase
 
     std::string m_projectRoot;
     std::string m_assetsRoot;
+    std::vector<std::string> m_extraScanRoots;
 
     // GUID -> path
     std::unordered_map<std::string, std::string> m_guidToPath;

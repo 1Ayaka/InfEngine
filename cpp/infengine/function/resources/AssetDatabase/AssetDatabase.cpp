@@ -48,6 +48,17 @@ void AssetDatabase::Initialize(const std::string &projectRoot)
     INFLOG_DEBUG("AssetDatabase initialized. ProjectRoot=", m_projectRoot, ", AssetsRoot=", m_assetsRoot);
 }
 
+void AssetDatabase::AddScanRoot(const std::string &path)
+{
+    auto norm = FromFsPath(ToFsPath(path));
+    for (const auto &existing : m_extraScanRoots) {
+        if (existing == norm)
+            return;
+    }
+    m_extraScanRoots.push_back(std::move(norm));
+    INFLOG_DEBUG("AssetDatabase: added extra scan root: ", m_extraScanRoots.back());
+}
+
 void AssetDatabase::Refresh()
 {
     m_guidToPath.clear();
@@ -72,7 +83,17 @@ void AssetDatabase::Refresh()
     };
     std::vector<PendingAsset> pendingImports;
 
-    for (const auto &entry : std::filesystem::recursive_directory_iterator(assetsRootPath)) {
+    // Collect all directories to scan: Assets root + extra roots (e.g. Library/Resources)
+    std::vector<std::filesystem::path> scanRoots;
+    scanRoots.push_back(assetsRootPath);
+    for (const auto &extra : m_extraScanRoots) {
+        std::filesystem::path ep = ToFsPath(extra);
+        if (std::filesystem::exists(ep))
+            scanRoots.push_back(ep);
+    }
+
+    for (const auto &rootPath : scanRoots) {
+    for (const auto &entry : std::filesystem::recursive_directory_iterator(rootPath)) {
         if (!entry.is_regular_file())
             continue;
 
@@ -103,6 +124,7 @@ void AssetDatabase::Refresh()
         UpdateMapping(guid, pathStr);
         pendingImports.push_back({guid, pathStr});
     }
+    } // end scan roots
 
     // ── Pass 2: Run importers (ScanDependencies can now resolve all paths) ──
     for (const auto &asset : pendingImports) {

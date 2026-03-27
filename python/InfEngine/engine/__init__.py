@@ -9,7 +9,7 @@ import uuid
 _PLAYER_MODE = os.environ.get("_INFENGINE_PLAYER_MODE")
 
 from InfEngine.lib import InfGUIRenderable, InfGUIContext, TextureLoader, TextureData
-from InfEngine.resources import engine_font_path, icon_path
+from InfEngine import resources as _resources
 from .engine import Engine, LogLevel
 from .play_mode import PlayModeManager, PlayModeState
 from .scene_manager import SceneFileManager
@@ -160,12 +160,16 @@ def release_engine(project_path: str, engine_log_level=LogLevel.Info):
     import time
     from .bootstrap import EditorBootstrap
 
+    from .library_sync import sync_resources
+    sync_resources(project_path)
+    _resources.activate_library(project_path)
+
     lock_path, lock_token = _acquire_project_lock(project_path, "editor")
     try:
         bootstrap = EditorBootstrap(project_path, engine_log_level)
         bootstrap.run()
 
-        bootstrap.engine.set_window_icon(icon_path)
+        bootstrap.engine.set_window_icon(_resources.icon_path)
 
         # Signal the launcher splash to begin its fade-out, then wait for it
         # to finish before revealing the engine window.
@@ -199,6 +203,10 @@ def run_player(project_path: str, engine_log_level=LogLevel.Info):
     import json
     import time
     from .player_bootstrap import PlayerBootstrap
+
+    from .library_sync import sync_resources
+    sync_resources(project_path)
+    _resources.activate_library(project_path)
 
     # Packaged/standalone games skip the project lock entirely — they
     # have their own self-contained Data folder and should never conflict
@@ -247,7 +255,7 @@ def run_player(project_path: str, engine_log_level=LogLevel.Info):
             bootstrap.engine.set_maximized(False)
             bootstrap.engine.set_resizable(window_resizable)
 
-        bootstrap.engine.set_window_icon(icon_path)
+        bootstrap.engine.set_window_icon(_resources.icon_path)
 
         _signal_engine_loaded()
         time.sleep(0.3)

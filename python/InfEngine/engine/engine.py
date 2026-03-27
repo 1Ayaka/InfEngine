@@ -121,6 +121,11 @@ class Engine():
         if os.path.isdir(materials_dir):
             search_dirs.append(materials_dir)
 
+        # Also scan Library/Resources/materials for built-in materials
+        library_mat_dir = os.path.join(project_path, "Library", "Resources", "materials")
+        if os.path.isdir(library_mat_dir):
+            search_dirs.append(library_mat_dir)
+
         default_loaded = False
         extra_count = 0
 

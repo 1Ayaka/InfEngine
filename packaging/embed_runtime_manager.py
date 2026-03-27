@@ -86,6 +86,8 @@ def _run_command(args: list[str], *, timeout: int, raise_on_error: bool = False)
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
     }
     if sys.platform == "win32":
         kwargs["creationflags"] = _NO_WINDOW

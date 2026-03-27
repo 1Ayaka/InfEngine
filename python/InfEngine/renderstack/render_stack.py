@@ -121,18 +121,30 @@ class RenderStack(InfComponent):
         self._register_pipeline_catalog_reload()
         self._sync_pipeline_catalog()
 
-        if RenderStack._active_instance is not None and RenderStack._active_instance is not self:
-            go_name = getattr(self.game_object, "name", "???")
-            ex_go = RenderStack._active_instance.game_object
-            ex_go_name = getattr(ex_go, "name", "???") if ex_go else "???"
-            print(
-                f"[RenderStack] Scene already has a RenderStack on "
-                f"'{ex_go_name}'. Only one per scene is allowed. "
-                f"Removing duplicate from '{go_name}'.",
-                file=sys.stderr,
+        existing = RenderStack._active_instance
+        if existing is not None and existing is not self:
+            # The existing instance may be pending-destroy (DestroyGameObject
+            # is deferred) or disabled.  In that case it is stale and we
+            # should take over as the active singleton.
+            still_valid = (
+                existing.is_valid
+                and existing.enabled
+                and getattr(existing.game_object, "is_active_in_hierarchy", lambda: False)()
             )
-            self.game_object.remove_py_component(self)
-            return
+            if still_valid:
+                go_name = getattr(self.game_object, "name", "???")
+                ex_go = existing.game_object
+                ex_go_name = getattr(ex_go, "name", "???") if ex_go else "???"
+                print(
+                    f"[RenderStack] Scene already has a RenderStack on "
+                    f"'{ex_go_name}'. Only one per scene is allowed. "
+                    f"Removing duplicate from '{go_name}'.",
+                    file=sys.stderr,
+                )
+                self.game_object.remove_py_component(self)
+                return
+            # Stale — evict it
+            RenderStack._active_instance = None
         RenderStack._active_instance = self
 
     def on_destroy(self) -> None:
@@ -145,6 +157,18 @@ class RenderStack(InfComponent):
         self._pipeline = None
         self._graph_desc = None
         self._resource_bus = None
+
+    def on_enable(self) -> None:
+        """组件启用时恢复为活跃实例。"""
+        if RenderStack._active_instance is None:
+            RenderStack._active_instance = self
+            self.invalidate_graph()
+
+    def on_disable(self) -> None:
+        """组件禁用时释放活跃实例，允许回退到默认管线。"""
+        if RenderStack._active_instance is self:
+            RenderStack._active_instance = None
+        self._graph_desc = None
 
     # ------------------------------------------------------------------
     # Serialization hooks

@@ -21,7 +21,7 @@ import os
 from typing import Dict, List, Optional
 
 from InfEngine.lib import TagLayerManager
-from InfEngine.resources import engine_font_path
+import InfEngine.resources as _resources
 from InfEngine.engine.engine import Engine, LogLevel
 from InfEngine.engine.scene_manager import SceneFileManager
 from InfEngine.engine.play_mode import PlayModeManager
@@ -112,7 +112,7 @@ class PlayerBootstrap:
         self.engine.init_renderer(
             width=w, height=h, project_path=self.project_path
         )
-        self.engine.set_gui_font(engine_font_path, 15)
+        self.engine.set_gui_font(_resources.engine_font_path, 15)
 
     # ── Phase 3: Tag/layer settings ────────────────────────────────────
 

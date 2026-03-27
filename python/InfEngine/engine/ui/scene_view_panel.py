@@ -11,7 +11,7 @@ from .panel_registry import editor_panel
 from .theme import Theme, ImGuiCol, ImGuiStyleVar
 from .viewport_utils import ViewportInfo, capture_viewport_info
 from . import imgui_keys as _keys
-from InfEngine.resources import file_type_icons_dir
+import InfEngine.resources as _resources
 
 # Gizmo axis IDs — must match C++ EditorTools constants
 from InfEngine.lib._InfEngine import GIZMO_X_AXIS_ID, GIZMO_Y_AXIS_ID, GIZMO_Z_AXIS_ID
@@ -471,7 +471,7 @@ class SceneViewPanel(EditorPanel):
             if native.has_imgui_texture(tex_name):
                 self._tool_icon_ids[mode] = native.get_imgui_texture_id(tex_name)
                 continue
-            icon_path = os.path.join(file_type_icons_dir, filename)
+            icon_path = os.path.join(_resources.file_type_icons_dir, filename)
             if not os.path.isfile(icon_path):
                 continue
             tex_data = TextureLoader.load_from_file(icon_path)

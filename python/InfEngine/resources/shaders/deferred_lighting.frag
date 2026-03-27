@@ -2,17 +2,16 @@
 @shader_id: deferred_lighting
 @hidden
 
-// Deferred lighting pass.
-// The current built-in deferred path stores the lit scene color in slot 0
-// and auxiliary material data in the remaining GBuffer targets. This pass
-// therefore reconstructs the final color by passing through slot 0 and
-// re-adding emission, while keeping the other inputs available for future
-// true deferred relighting.
+// Deferred lighting pass (pre-lit hybrid deferred).
+// The GBuffer evaluate already performs full PBR lighting and stores the
+// HDR lit color (including emission) in slot 0.  This pass simply passes
+// it through, keeping the other GBuffer inputs available for future
+// post-process effects (e.g. SSAO, SSR, bloom from emission).
 //
 // Binding layout (matches GBuffer MRT + depth + shadow map):
-//   binding 0 — gAlbedo     (RGBA8_UNORM: lit scene color)
+//   binding 0 — gAlbedo     (RGBA16_SFLOAT: pre-lit HDR color)
 //   binding 1 — gNormal     (RGBA16_SFLOAT: encoded world normal.xyz)
-//   binding 2 — gMaterial   (RGBA8_UNORM: metallic, smoothness, specularHighlights, alpha)
+//   binding 2 — gMaterial   (RGBA8_UNORM: metallic, occlusion, specularHighlights, 1.0)
 //   binding 3 — gEmission   (RGBA16_SFLOAT: emission.rgb)
 //   binding 4 — sceneDepth  (D32_SFLOAT)
 //   binding 5 — shadowMap   (D32_SFLOAT)
@@ -28,9 +27,5 @@ layout(location = 0) in  vec2 inUV;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec4 litColor = texture(_GAlbedo, inUV);
-    vec4 material = texture(_GMaterial, inUV);
-    vec3 emission = texture(_GEmission, inUV).rgb;
-
-    outColor = vec4(litColor.rgb + emission, material.a > 0.0 ? material.a : litColor.a);
+    outColor = texture(_GAlbedo, inUV);
 }

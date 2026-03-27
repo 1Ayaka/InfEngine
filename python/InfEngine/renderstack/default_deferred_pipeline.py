@@ -122,7 +122,7 @@ class DefaultDeferredPipeline(RenderPipeline):
             format=Format.D32_SFLOAT,
             size=(shadow_res, shadow_res),
         )
-        graph.create_texture("gbuffer_albedo", format=Format.RGBA8_UNORM)
+        graph.create_texture("gbuffer_albedo", format=Format.RGBA16_SFLOAT)
         graph.create_texture("gbuffer_normal", format=Format.RGBA16_SFLOAT)
         graph.create_texture("gbuffer_material", format=Format.RGBA8_UNORM)
         graph.create_texture("gbuffer_emission", format=Format.RGBA16_SFLOAT)

@@ -78,7 +78,7 @@ class RenderStackPipeline(RenderPipeline):
 
         # Fast path: class-level singleton
         inst = RenderStack.instance()
-        if inst is not None:
+        if inst is not None and inst.is_valid and inst.enabled:
             return inst
 
         scene = context.scene
@@ -89,13 +89,17 @@ class RenderStackPipeline(RenderPipeline):
         scene_key = _scene_cache_key(scene)
         ver = scene.structure_version
         if scene_key == self._cached_stack_scene_key and ver == self._cached_stack_version:
-            return self._cached_stack
+            cached = self._cached_stack
+            if cached is not None and (not cached.is_valid or not cached.enabled):
+                self._cached_stack = None
+                return None
+            return cached
 
         # Slow path: scan scene (only when structure changes)
         found = None
         for obj in scene.get_all_objects():
             for comp in obj.get_py_components():
-                if isinstance(comp, RenderStack):
+                if isinstance(comp, RenderStack) and comp.is_valid and comp.enabled:
                     found = comp
                     break
             if found is not None:

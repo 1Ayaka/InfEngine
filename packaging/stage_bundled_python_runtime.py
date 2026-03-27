@@ -37,6 +37,8 @@ def _run(args: list[str], *, timeout: int = 20) -> subprocess.CompletedProcess:
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
         "timeout": timeout,
     }
     if sys.platform == "win32":

@@ -11,7 +11,7 @@ Usage::
 
 import os
 from InfEngine.lib import TextureLoader
-from InfEngine.resources import file_type_icons_dir
+import InfEngine.resources as _resources
 
 _cache: dict[str, int] = {}
 _loaded: bool = False
@@ -34,7 +34,7 @@ def _ensure_loaded(native_engine) -> None:
         if native_engine.has_imgui_texture(tex_name):
             _cache[name] = native_engine.get_imgui_texture_id(tex_name)
             continue
-        path = os.path.join(file_type_icons_dir, f"{name}.png")
+        path = os.path.join(_resources.file_type_icons_dir, f"{name}.png")
         if not os.path.isfile(path):
             continue
         td = TextureLoader.load_from_file(path)

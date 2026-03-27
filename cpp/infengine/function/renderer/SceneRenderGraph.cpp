@@ -463,6 +463,11 @@ void SceneRenderGraph::EnsureGraphBuilt()
         auto currentMsaa = static_cast<int>(m_sceneTarget->GetMsaaSampleCount());
         if (m_pythonGraphDesc.msaaSamples != currentMsaa) {
             m_needsRebuild = true;
+            // Prevent Execute() from running the stale compiled graph
+            // whose render passes reference images with the old sample
+            // count.  Without this, a single frame of execution with
+            // mismatched MSAA resources can cause a Vulkan error or hang.
+            m_graphBuilt = false;
             return;
         }
     }

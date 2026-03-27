@@ -3,8 +3,14 @@
 // ============================================================================
 // surface.glsl — SurfaceData struct for the surface() shading model
 //
-// Provides a standardized data structure that surface() shaders fill in.
-// The engine then evaluates lighting via the referenced .shadingmodel file.
+// [The Data Contract]
+// Provides a standardized data structure that user-authored surface() shaders fill in.
+// By consolidating all material properties into this intermediate layer:
+//  1. Users write intuitive material logic (unlit.frag, lit.frag) ignoring layout/binds.
+//  2. TAs author specific lighting models (.shadingmodel) using this data.
+//  3. The RenderStack pipeline can automatically extract this data for multi-pass 
+//     targets (like packing into MRTs for Deferred G-Buffer) without requiring 
+//     the user or TA to rewrite shader code for different pipelines.
 //
 // Usage:
 //   @shading_model: pbr    (or @shading_model: unlit)

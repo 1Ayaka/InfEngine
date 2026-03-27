@@ -24,6 +24,8 @@ def _popen_kwargs(*, capture_output: bool = False) -> dict:
         kw["stdout"] = subprocess.PIPE
         kw["stderr"] = subprocess.PIPE
         kw["text"] = True
+        kw["encoding"] = "utf-8"
+        kw["errors"] = "replace"
     else:
         kw["stdout"] = subprocess.DEVNULL
         kw["stderr"] = subprocess.DEVNULL

@@ -1,9 +1,18 @@
 // ============================================================================
 // pbr.shadingmodel — Standard PBR (Cook-Torrance) Shading Model
 //
-// Provides evaluate() for the forward rendering target.  GBuffer packing uses
-// the engine default (default_gbuffer_evaluate.glsl).  Shadow pass is fully
-// automatic (depth-only or alpha-clip injected by the engine).
+// [Architectural Note: Pipeline Agnosticism & GBuffer Fallback]
+// This shading model intentionally only defines `@target: forward` for lighting.
+// How does it work in a Deferred Pipeline? 
+// Because of the 'SurfaceData' abstraction layer, the engine knows how to extract
+// core material properties (albedo, normal, metallic, etc.). When compiling for
+// ShaderCompileTarget::GBuffer, if no `@target: gbuffer` block is found here, 
+// the engine automatically injects the built-in `default_gbuffer_evaluate.glsl` 
+// fallback template.
+// 
+// This decoupling means TAs only author PBR lighting math once (for forward),
+// and the material logic (surface.frag) automatically survives switching between 
+// Forward and Deferred pipelines without changing a single line of shader code.
 //
 // Referenced by surface shaders via @shading_model: pbr
 // ============================================================================
