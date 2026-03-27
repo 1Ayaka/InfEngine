@@ -1149,7 +1149,7 @@ bool InfVkCoreModular::EnsureShadowPipeline(VkRenderPass /*compatibleRenderPass*
         pushRange.size = sizeof(glm::mat4) * 2; // model + normalMat
 
         VkDescriptorSetLayout setLayouts[3] = {m_shadowDescSetLayout, m_globalsDescSetLayout,
-                               m_shadowMaterialDescSetLayout};
+                                               m_shadowMaterialDescSetLayout};
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

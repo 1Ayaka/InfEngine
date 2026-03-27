@@ -289,8 +289,7 @@ void InfScreenUIRenderer::AddImage(ScreenUIList list, uint64_t textureId, float 
     rotation = std::fmod(rotation, 360.0f);
     if (rotation < 0.0f)
         rotation += 360.0f;
-    if ((std::fabs(rotation) < 0.001f) && !mirrorH && !mirrorV)
-    {
+    if ((std::fabs(rotation) < 0.001f) && !mirrorH && !mirrorV) {
         TrackHDRColorRange(list, vtxStart, dl->VtxBuffer.Size, hdrScale);
         return;
     }
@@ -338,8 +337,7 @@ void InfScreenUIRenderer::AddText(ScreenUIList list, float minX, float minY, flo
     rotation = std::fmod(rotation, 360.0f);
     if (rotation < 0.0f)
         rotation += 360.0f;
-    if ((std::fabs(rotation) < 0.001f) && !mirrorH && !mirrorV)
-    {
+    if ((std::fabs(rotation) < 0.001f) && !mirrorH && !mirrorV) {
         TrackHDRColorRange(list, vtxStart, dl->VtxBuffer.Size, hdrScale);
         return;
     }

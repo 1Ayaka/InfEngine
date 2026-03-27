@@ -660,9 +660,8 @@ std::string InfShaderLoader::GenerateGLSL(const ShaderDescriptor &desc, const st
     bool isSurfaceFragment = desc.isFragmentShader && hasSurfaceFunc;
     bool needsMaterialUBO = !desc.properties.empty() || isSurfaceFragment;
     // Vertex shaders with vertex() may need material properties in shadow (as constants)
-    bool shadowVertexNeedsMaterial =
-        (target == ShaderCompileTarget::Shadow && desc.isVertexShader && desc.hasVertexFunc &&
-         !desc.properties.empty());
+    bool shadowVertexNeedsMaterial = (target == ShaderCompileTarget::Shadow && desc.isVertexShader &&
+                                      desc.hasVertexFunc && !desc.properties.empty());
     if (target != ShaderCompileTarget::Shadow || shadowNeedsAlphaClip || shadowVertexNeedsMaterial) {
         if (needsMaterialUBO) {
             // Vertex shader MaterialProperties gets a dedicated high binding (14) to
@@ -675,8 +674,7 @@ std::string InfShaderLoader::GenerateGLSL(const ShaderDescriptor &desc, const st
             }
             result << "\n// Auto-generated MaterialProperties UBO from @property annotations\n";
             if (target == ShaderCompileTarget::Shadow && desc.isVertexShader) {
-                result << "layout(std140, set = 2, binding = " << materialBinding
-                       << ") uniform MaterialProperties {\n";
+                result << "layout(std140, set = 2, binding = " << materialBinding << ") uniform MaterialProperties {\n";
             } else {
                 result << "layout(std140, binding = " << materialBinding << ") uniform MaterialProperties {\n";
             }

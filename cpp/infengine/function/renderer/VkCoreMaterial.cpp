@@ -864,9 +864,7 @@ void InfVkCoreModular::CreateMaterialShadowPipeline(std::shared_ptr<InfMaterial>
         if (m_shadowPipelineReady) {
             VkDevice dev = device;
             VkDescriptorPool pool = m_shadowMaterialDescPool;
-            m_deletionQueue.Push([dev, pool, descriptorSet]() {
-                vkFreeDescriptorSets(dev, pool, 1, &descriptorSet);
-            });
+            m_deletionQueue.Push([dev, pool, descriptorSet]() { vkFreeDescriptorSets(dev, pool, 1, &descriptorSet); });
         } else {
             vkFreeDescriptorSets(device, m_shadowMaterialDescPool, 1, &descriptorSet);
         }

@@ -278,8 +278,7 @@ MaterialDescriptorSet *MaterialDescriptorManager::GetOrCreateDescriptorSet(const
             INFLOG_DEBUG("GetOrCreateDescriptorSet: REUSING cached descriptor for '", materialName, "'");
             return it->second.get();
         } else {
-            INFLOG_INFO("Material '", materialName,
-                        "' descriptor requirements changed, recreating descriptor set");
+            INFLOG_INFO("Material '", materialName, "' descriptor requirements changed, recreating descriptor set");
             // Defer destruction of the old descriptor set + UBO.  The GPU
             // may still be referencing them in an in-flight command buffer.
             // Use shared_ptr so the lambda is copy-constructible (std::function requirement).
@@ -507,8 +506,7 @@ void MaterialDescriptorManager::UpdateDescriptorBindings(MaterialDescriptorSet &
             bool isVertexMaterialUBOBinding =
                 vertMatLayout && vertMatLayout->size > 0 && binding.binding == vertMatLayout->binding;
 
-            if (isVertexMaterialUBOBinding && matDescSet.vertexMaterialUBO &&
-                matDescSet.vertexMaterialUBO->IsValid()) {
+            if (isVertexMaterialUBOBinding && matDescSet.vertexMaterialUBO && matDescSet.vertexMaterialUBO->IsValid()) {
                 // Vertex-stage material UBO at binding 14
                 bufferInfo.buffer = matDescSet.vertexMaterialUBO->GetBuffer();
                 bufferInfo.offset = 0;

@@ -753,7 +753,7 @@ void OutlineRenderer::CreateOutlineMaterialResources()
         pushRange.size = 128; // 2 x mat4
 
         VkDescriptorSetLayout setLayouts[3] = {m_outlineMtlSet0Layout, m_emptyDescSetLayout,
-                                                m_core->GetGlobalsDescSetLayout()};
+                                               m_core->GetGlobalsDescSetLayout()};
 
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1115,8 +1115,8 @@ void OutlineRenderer::RenderOutlineMask(VkCommandBuffer cmdBuf, const std::vecto
 
                 if (mtlPipeline != VK_NULL_HANDLE && mtlDescSet != VK_NULL_HANDLE) {
                     // Write the object's world transform to the per-frame instance buffer
-                    uint32_t frameIdx = m_core->GetSwapchain().GetCurrentFrame() %
-                                        static_cast<uint32_t>(m_outlineInstanceBufs.size());
+                    uint32_t frameIdx =
+                        m_core->GetSwapchain().GetCurrentFrame() % static_cast<uint32_t>(m_outlineInstanceBufs.size());
                     std::memcpy(m_outlineInstanceBufs[frameIdx].mapped, &dc.worldMatrix, sizeof(glm::mat4));
 
                     // Bind per-material pipeline

@@ -19,16 +19,16 @@ ShaderProgram::ShaderProgram(ShaderProgram &&other) noexcept
       m_fragModule(other.m_fragModule), m_vertReflection(std::move(other.m_vertReflection)),
       m_fragReflection(std::move(other.m_fragReflection)), m_descriptorBindings(std::move(other.m_descriptorBindings)),
       m_descriptorSetLayouts(std::move(other.m_descriptorSetLayouts)), m_pipelineLayout(other.m_pipelineLayout),
-            m_materialUBOLayout(std::move(other.m_materialUBOLayout)), m_hasMaterialUBO(other.m_hasMaterialUBO),
-            m_vertexMaterialUBOLayout(std::move(other.m_vertexMaterialUBOLayout)),
-            m_hasVertexMaterialUBO(other.m_hasVertexMaterialUBO)
+      m_materialUBOLayout(std::move(other.m_materialUBOLayout)), m_hasMaterialUBO(other.m_hasMaterialUBO),
+      m_vertexMaterialUBOLayout(std::move(other.m_vertexMaterialUBOLayout)),
+      m_hasVertexMaterialUBO(other.m_hasVertexMaterialUBO)
 {
     other.m_device = VK_NULL_HANDLE;
     other.m_vertModule = VK_NULL_HANDLE;
     other.m_fragModule = VK_NULL_HANDLE;
     other.m_pipelineLayout = VK_NULL_HANDLE;
-        other.m_hasMaterialUBO = false;
-        other.m_hasVertexMaterialUBO = false;
+    other.m_hasMaterialUBO = false;
+    other.m_hasVertexMaterialUBO = false;
     other.m_descriptorSetLayouts.clear();
 }
 

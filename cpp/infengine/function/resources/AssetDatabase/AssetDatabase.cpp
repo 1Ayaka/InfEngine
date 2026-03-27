@@ -93,37 +93,37 @@ void AssetDatabase::Refresh()
     }
 
     for (const auto &rootPath : scanRoots) {
-    for (const auto &entry : std::filesystem::recursive_directory_iterator(rootPath)) {
-        if (!entry.is_regular_file())
-            continue;
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(rootPath)) {
+            if (!entry.is_regular_file())
+                continue;
 
-        const std::filesystem::path filePath = entry.path();
+            const std::filesystem::path filePath = entry.path();
 
-        // Remove orphaned .tmp files left by interrupted meta saves or OS copies
-        if (filePath.extension() == ".tmp") {
-            std::error_code ec;
-            std::filesystem::remove(filePath, ec);
-            if (!ec) {
-                INFLOG_DEBUG("AssetDatabase.Refresh: cleaned up orphaned temp file: ", FromFsPath(filePath));
+            // Remove orphaned .tmp files left by interrupted meta saves or OS copies
+            if (filePath.extension() == ".tmp") {
+                std::error_code ec;
+                std::filesystem::remove(filePath, ec);
+                if (!ec) {
+                    INFLOG_DEBUG("AssetDatabase.Refresh: cleaned up orphaned temp file: ", FromFsPath(filePath));
+                }
+                continue;
             }
-            continue;
+
+            if (IsMetaFile(filePath))
+                continue;
+
+            std::string pathStr = FromFsPath(filePath);
+            ResourceType type = GetResourceTypeForPath(pathStr);
+            if (type == ResourceType::Meta)
+                continue;
+
+            std::string guid = RegisterResource(pathStr, type);
+            if (guid.empty())
+                continue;
+
+            UpdateMapping(guid, pathStr);
+            pendingImports.push_back({guid, pathStr});
         }
-
-        if (IsMetaFile(filePath))
-            continue;
-
-        std::string pathStr = FromFsPath(filePath);
-        ResourceType type = GetResourceTypeForPath(pathStr);
-        if (type == ResourceType::Meta)
-            continue;
-
-        std::string guid = RegisterResource(pathStr, type);
-        if (guid.empty())
-            continue;
-
-        UpdateMapping(guid, pathStr);
-        pendingImports.push_back({guid, pathStr});
-    }
     } // end scan roots
 
     // ── Pass 2: Run importers (ScanDependencies can now resolve all paths) ──
